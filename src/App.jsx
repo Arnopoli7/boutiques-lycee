@@ -391,7 +391,7 @@ const LoginScreen = ({ onLogin }) => {
 
 // ─── MODULE CAISSE ──────────────────────────────────────────────────────────
 
-const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesLocale = [], userBoutiques, onVente }) => {
+const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesLocale = [], userBoutiques, onVente, ventesPeda = [], ventesLocale = [], setVentesPeda, setVentesLocale, setArticlesPeda, setArticlesLocale, isAdmin = false }) => {
   const [panier, setPanier] = useState([]);
   const [recherche, setRecherche] = useState("");
   const [shopFiltre, setShopFiltre] = useState("Toutes");
@@ -400,6 +400,14 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
   const [montantRemis, setMontantRemis] = useState("");
   const [confirmation, setConfirmation] = useState(false);
   const [alerte, setAlerte] = useState(null);
+  const [modalRetour, setModalRetour] = useState(null); // null | "mdp" | "main"
+  const [retourMdp, setRetourMdp] = useState("");
+  const [retourErreur, setRetourErreur] = useState("");
+  const [retourSearch, setRetourSearch] = useState("");
+  const [retourVente, setRetourVente] = useState(null);
+  const [retourQtes, setRetourQtes] = useState({});
+  const [retourPaiement, setRetourPaiement] = useState("especes");
+  const [retourConfirm, setRetourConfirm] = useState(false);
 
   const hasMultiShop = userBoutiques.length > 1;
   const singleShop = !hasMultiShop ? userBoutiques[0] : null;
@@ -552,6 +560,62 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
     setTimeout(() => setConfirmation(false), 3000);
   };
 
+  const toutesVentes = useMemo(() => [
+    ...ventesPeda.map(v => ({ ...v, _shop: "peda" })),
+    ...ventesLocale.map(v => ({ ...v, _shop: "locale" })),
+  ], [ventesPeda, ventesLocale]);
+
+  const ventesRetourFiltered = useMemo(() => {
+    if (!retourSearch.trim()) return [];
+    const q = retourSearch.trim().toLowerCase();
+    return toutesVentes.filter(v =>
+      String(v.id).includes(q) ||
+      (v.date && v.date.slice(0, 10).includes(q)) ||
+      (v.date && new Date(v.date).toLocaleDateString("fr-FR").includes(q))
+    ).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 20);
+  }, [toutesVentes, retourSearch]);
+
+  const validerRetour = () => {
+    if (!retourVente) return;
+    const itemsRetour = retourVente.items.filter(it => (retourQtes[it.id] || 0) > 0);
+    if (itemsRetour.length === 0) return;
+    const montantRetour = r2(itemsRetour.reduce((s, it) => s + it.prix * (retourQtes[it.id] || 0), 0));
+    const totalRetourne = itemsRetour.reduce((s, it) => s + (retourQtes[it.id] || 0), 0);
+    const totalOriginal = retourVente.items.reduce((s, it) => s + it.qte, 0);
+    const isTotal = totalRetourne >= totalOriginal;
+    const shopCible = retourVente._shop;
+    const { _shop: _remove, ...venteBase } = retourVente;
+    const venteModifiee = {
+      ...venteBase,
+      statut: isTotal ? "annulee" : "retour_partiel",
+      retours: [...(venteBase.retours || []), {
+        items: itemsRetour.map(it => ({ id: it.id, nom: it.nom, qte: retourQtes[it.id], prix: it.prix })),
+        paiementRetour: retourPaiement,
+        montantRetour,
+        dateRetour: new Date().toISOString(),
+      }],
+    };
+    if (shopCible === "peda") {
+      if (setVentesPeda) setVentesPeda(prev => prev.map(v => v.id === retourVente.id ? venteModifiee : v));
+      if (setArticlesPeda) setArticlesPeda(prev => prev.map(a => {
+        const item = itemsRetour.find(it => it.id === a.id);
+        return item ? { ...a, stock: a.stock + item.qte } : a;
+      }));
+    } else {
+      if (setVentesLocale) setVentesLocale(prev => prev.map(v => v.id === retourVente.id ? venteModifiee : v));
+      if (setArticlesLocale) setArticlesLocale(prev => prev.map(a => {
+        const item = itemsRetour.find(it => it.id === a.id);
+        return item ? { ...a, stock: a.stock + item.qte } : a;
+      }));
+    }
+    setRetourConfirm(true);
+    setRetourVente(null);
+    setRetourQtes({});
+    setRetourSearch("");
+    setModalRetour(null);
+    setTimeout(() => setRetourConfirm(false), 4000);
+  };
+
   const monnaie = paiement === "especes" && montantRemis && !isNaN(parseFloat(montantRemis))
     ? r2(parseFloat(montantRemis) - totalPanier) : null;
 
@@ -603,7 +667,17 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
       {/* Grille produits */}
       <div className="flex-1 min-w-0">
         {confirmation && <Alert type="success" msg="✅ Vente enregistrée avec succès !" />}
+        {retourConfirm && <Alert type="success" msg="↩ Retour enregistré ! Le stock a été recrédité." />}
         {alerte && <Alert type="warning" msg={alerte} onClose={() => setAlerte(null)} />}
+
+        {isAdmin && (
+          <div className="flex justify-end mb-3">
+            <button onClick={() => { setModalRetour("mdp"); setRetourMdp(""); setRetourErreur(""); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${dark ? "border-orange-700 text-orange-400 hover:bg-orange-900/30" : "border-orange-300 text-orange-600 hover:bg-orange-50"}`}>
+              <RefreshCw size={13} /> Retour article
+            </button>
+          </div>
+        )}
 
         {/* Filtres */}
         <div className="flex gap-2 mb-4 flex-wrap">
@@ -818,6 +892,147 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
           </div>
         )}
       </div>
+
+      {/* ── MODAL RETOUR : MOT DE PASSE ── */}
+      {modalRetour === "mdp" && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className={`${d.modal} border rounded-2xl shadow-2xl w-full max-w-sm`}>
+            <div className={`flex items-center justify-between p-5 border-b ${d.modalHead}`}>
+              <h3 className={`font-bold text-lg ${d.text} flex items-center gap-2`}><Lock size={16}/> Retour article — Admin</h3>
+              <button onClick={() => setModalRetour(null)} className={`p-1.5 rounded-lg ${d.btnGhost}`}><X size={18}/></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className={`text-sm ${d.textSub}`}>Cette fonctionnalité est réservée aux administrateurs. Saisissez le mot de passe admin pour continuer.</p>
+              <Input label="Mot de passe admin" type="password" value={retourMdp}
+                onChange={e => { setRetourMdp(e.target.value); setRetourErreur(""); }}
+                onKeyDown={e => { if (e.key === "Enter") { if (retourMdp === "Arnaud123") { setModalRetour("main"); setRetourMdp(""); } else setRetourErreur("Mot de passe incorrect."); }}}
+                placeholder="••••••••" />
+              {retourErreur && <p className="text-xs text-red-500">{retourErreur}</p>}
+              <div className="flex gap-2">
+                <Btn onClick={() => { if (retourMdp === "Arnaud123") { setModalRetour("main"); setRetourMdp(""); } else setRetourErreur("Mot de passe incorrect."); }}>
+                  <Lock size={14}/> Valider
+                </Btn>
+                <Btn variant="secondary" onClick={() => setModalRetour(null)}>Annuler</Btn>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL RETOUR : PRINCIPAL ── */}
+      {modalRetour === "main" && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className={`${d.modal} border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto`}>
+            <div className={`flex items-center justify-between p-5 border-b ${d.modalHead}`}>
+              <h3 className={`font-bold text-lg ${d.text} flex items-center gap-2`}><RefreshCw size={16}/> Retour / Remboursement</h3>
+              <button onClick={() => { setModalRetour(null); setRetourVente(null); setRetourSearch(""); setRetourQtes({}); }} className={`p-1.5 rounded-lg ${d.btnGhost}`}><X size={18}/></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className={`block text-sm font-medium mb-1 ${d.label}`}>Rechercher une vente (date jj/mm/aaaa ou numéro)</label>
+                <div className="relative">
+                  <Search size={15} className={`absolute left-3 top-2.5 ${d.textMuted}`}/>
+                  <input className={`w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${d.input}`}
+                    placeholder="Ex: 27/03/2026 ou numéro de vente" value={retourSearch}
+                    onChange={e => { setRetourSearch(e.target.value); setRetourVente(null); setRetourQtes({}); }} />
+                </div>
+              </div>
+              {retourSearch && !retourVente && (
+                <div className="space-y-2 max-h-52 overflow-y-auto">
+                  {ventesRetourFiltered.length === 0 ? (
+                    <p className={`text-sm text-center py-4 ${d.textMuted}`}>Aucune vente trouvée</p>
+                  ) : ventesRetourFiltered.map(v => (
+                    <button key={`${v._shop}-${v.id}`} onClick={() => {
+                      setRetourVente(v);
+                      const init = {};
+                      v.items.forEach(it => { init[it.id] = 0; });
+                      setRetourQtes(init);
+                    }}
+                      className={`w-full text-left p-3 rounded-lg border transition-colors ${dark ? "border-gray-700 hover:bg-gray-700" : "border-gray-200 hover:bg-gray-50"}`}>
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <span className={`text-xs font-mono ${d.textMuted}`}>#{v.id}</span>
+                          <span className={`ml-2 text-sm font-medium ${d.text}`}>{fmtDate(v.date)}</span>
+                          {v.statut && v.statut !== "normal" && (
+                            <span className="ml-2 text-xs text-orange-500 font-medium">[{v.statut === "annulee" ? "Annulée" : "Retour partiel"}]</span>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <span className={`text-sm font-bold ${v._shop === "locale" ? "text-teal-500" : "text-orange-500"}`}>{fmt(v.total)}</span>
+                          <span className={`ml-2 text-xs ${d.textMuted}`}>{v.paiement === "especes" ? "💵" : "💳"}</span>
+                        </div>
+                      </div>
+                      <div className={`text-xs mt-1 ${d.textMuted}`}>{v.items.map(it => `${it.nom} ×${it.qte}`).join(", ")}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {retourVente && (
+                <div className="space-y-3">
+                  <div className={`flex items-center justify-between p-3 rounded-lg ${dark ? "bg-gray-700" : "bg-gray-50"}`}>
+                    <div>
+                      <span className={`text-xs font-mono ${d.textMuted}`}>#{retourVente.id}</span>
+                      <span className={`ml-2 text-sm font-semibold ${d.text}`}>{fmtDate(retourVente.date)}</span>
+                    </div>
+                    <button onClick={() => { setRetourVente(null); setRetourQtes({}); }} className={`text-xs ${d.textMuted} hover:text-red-500`}>Changer de vente</button>
+                  </div>
+                  <div>
+                    <p className={`text-sm font-medium mb-2 ${d.text}`}>Articles à retourner :</p>
+                    <div className="space-y-2">
+                      {retourVente.items.map(it => {
+                        const qteRetournee = (retourVente.retours || []).reduce((s, r) => s + ((r.items.find(ri => ri.id === it.id)?.qte) || 0), 0);
+                        const qteDisponible = it.qte - qteRetournee;
+                        if (qteDisponible <= 0) return null;
+                        return (
+                          <div key={it.id} className={`flex items-center justify-between p-2 rounded-lg border ${dark ? "border-gray-700" : "border-gray-200"}`}>
+                            <div>
+                              <span className={`text-sm font-medium ${d.text}`}>{it.nom}</span>
+                              <span className={`ml-2 text-xs ${d.textMuted}`}>(×{qteDisponible} dispo)</span>
+                              <span className={`ml-2 text-xs font-semibold ${retourVente._shop === "locale" ? "text-teal-500" : "text-orange-500"}`}>{fmt(it.prix)}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button onClick={() => setRetourQtes(prev => ({ ...prev, [it.id]: Math.max(0, (prev[it.id] || 0) - 1) }))} className={`w-6 h-6 ${dark ? "bg-gray-600 hover:bg-gray-500" : "bg-gray-200 hover:bg-gray-300"} rounded flex items-center justify-center`}><Minus size={10}/></button>
+                              <span className={`text-sm font-bold w-6 text-center ${d.text}`}>{retourQtes[it.id] || 0}</span>
+                              <button onClick={() => setRetourQtes(prev => ({ ...prev, [it.id]: Math.min(qteDisponible, (prev[it.id] || 0) + 1) }))} className={`w-6 h-6 ${dark ? "bg-gray-600 hover:bg-gray-500" : "bg-gray-200 hover:bg-gray-300"} rounded flex items-center justify-center`}><Plus size={10}/></button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {Object.values(retourQtes).some(q => q > 0) && (
+                    <div className={`p-3 rounded-lg ${dark ? "bg-gray-700" : "bg-blue-50"}`}>
+                      <div className={`flex justify-between text-sm font-bold ${d.text}`}>
+                        <span>Montant à rembourser :</span>
+                        <span className="text-blue-500">{fmt(r2(retourVente.items.filter(it => (retourQtes[it.id] || 0) > 0).reduce((s, it) => s + it.prix * (retourQtes[it.id] || 0), 0)))}</span>
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <p className={`text-sm font-medium mb-2 ${d.text}`}>Mode de remboursement :</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button onClick={() => setRetourPaiement("especes")}
+                        className={`flex items-center justify-center gap-2 py-2 rounded-lg border-2 text-sm font-medium transition-colors ${retourPaiement === "especes" ? "border-green-500 bg-green-500/10 text-green-500" : `${dark ? "border-gray-600 text-gray-300" : "border-gray-200 text-gray-600"}`}`}>
+                        <Banknote size={16}/> Espèces
+                      </button>
+                      <button onClick={() => setRetourPaiement("carte")}
+                        className={`flex items-center justify-center gap-2 py-2 rounded-lg border-2 text-sm font-medium transition-colors ${retourPaiement === "carte" ? "border-blue-500 bg-blue-500/10 text-blue-500" : `${dark ? "border-gray-600 text-gray-300" : "border-gray-200 text-gray-600"}`}`}>
+                        <CreditCard size={16}/> Carte bancaire
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <Btn onClick={validerRetour} disabled={!Object.values(retourQtes).some(q => q > 0)}>
+                      <RefreshCw size={14}/> Confirmer le retour
+                    </Btn>
+                    <Btn variant="secondary" onClick={() => { setRetourVente(null); setRetourQtes({}); }}>Annuler</Btn>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -833,6 +1048,7 @@ const ModuleArticles = ({ articles, setArticles, shop }) => {
   const [photoUploading, setPhotoUploading] = useState(false);
   const [etiquettesModal, setEtiquettesModal] = useState(false);
   const [etiquettesSelected, setEtiquettesSelected] = useState([]);
+  const [articleASupprimer, setArticleASupprimer] = useState(null);
   const color = shop === "locale" ? "teal" : "orange";
 
   const compressImage = (file, maxSize = 800, quality = 0.8) =>
@@ -956,6 +1172,12 @@ const ModuleArticles = ({ articles, setArticles, shop }) => {
     setArticles(prev => prev.map(a => a.id === id ? { ...a, actif: !a.actif } : a));
   };
 
+  const supprimerArticle = (id) => {
+    setArticles(prev => prev.filter(a => a.id !== id));
+    setArticleASupprimer(null);
+    setAlerte({ type: "success", msg: "Article supprimé définitivement." });
+  };
+
   const cats = ["Toutes", ...CATEGORIES[shop]];
   const dark = useDark();
   const d = dk(dark);
@@ -1037,6 +1259,9 @@ const ModuleArticles = ({ articles, setArticles, shop }) => {
                     <button onClick={() => toggleActif(art.id)} className={`p-1.5 rounded-lg ${art.actif ? "hover:bg-red-500/10 text-red-500" : "hover:bg-teal-500/10 text-teal-500"}`} title={art.actif ? "Désactiver" : "Activer"}>
                       {art.actif ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
                     </button>
+                    <button onClick={() => setArticleASupprimer(art)} className="p-1.5 hover:bg-red-500/10 text-red-600 rounded-lg" title="Supprimer l'article">
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -1087,6 +1312,23 @@ const ModuleArticles = ({ articles, setArticles, shop }) => {
           </Modal>
         );
       })()}
+
+      {articleASupprimer && (
+        <Modal title="Supprimer l'article" onClose={() => setArticleASupprimer(null)}>
+          <div className="space-y-4">
+            <p className={`text-sm ${d.text}`}>
+              Êtes-vous sûr de vouloir supprimer définitivement l'article <strong>"{articleASupprimer.nom}"</strong> ?
+              <br/><span className={`text-xs ${d.textMuted}`}>Cette action est irréversible.</span>
+            </p>
+            <div className="flex gap-2">
+              <Btn variant="danger" onClick={() => supprimerArticle(articleASupprimer.id)}>
+                <Trash2 size={14} /> Supprimer définitivement
+              </Btn>
+              <Btn variant="secondary" onClick={() => setArticleASupprimer(null)}>Annuler</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {modal === "form" && (
         <Modal title={form.id ? "Modifier l'article" : "Nouvel article"} onClose={() => setModal(null)}>
@@ -1726,6 +1968,8 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
     const nbVentesMois = ventesMois.length;
     const panierMoyenMois = nbVentesMois > 0 ? r2(caMois / nbVentesMois) : 0;
     const remisesMois = r2(ventesMois.reduce((s, v) => s + (v.montantRemise || 0), 0));
+    const caEspeces = r2(ventesMois.filter(v => v.paiement === "especes").reduce((s, v) => s + v.total, 0));
+    const caCarte = r2(ventesMois.filter(v => v.paiement === "carte").reduce((s, v) => s + v.total, 0));
 
     // Mois précédent
     const debutMoisPrec = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -1870,6 +2114,16 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
   <tbody>
     <tr style="background:#fef9f3"><td style="padding:6px 10px;border:1px solid #e5e7eb">Total remises accordées (sur ventes du mois)</td><td style="padding:6px 10px;border:1px solid #e5e7eb;text-align:right;font-weight:700;color:#F07800">${totalRemisesAccordees.toFixed(2)} €</td></tr>
     <tr><td style="padding:6px 10px;border:1px solid #e5e7eb">Remises actives en cours</td><td style="padding:6px 10px;border:1px solid #e5e7eb;text-align:right">${remisesActives.length}</td></tr>
+  </tbody>
+</table>
+
+<h2>Encaissements par mode de paiement</h2>
+<table>
+  <thead><tr><th>Mode de paiement</th><th style="text-align:right">Montant (€)</th></tr></thead>
+  <tbody>
+    <tr style="background:#f0fdf4"><td style="padding:6px 10px;border:1px solid #e5e7eb">💵 Espèces</td><td style="padding:6px 10px;border:1px solid #e5e7eb;text-align:right;font-weight:700;color:#16a34a">${caEspeces.toFixed(2)} €</td></tr>
+    <tr><td style="padding:6px 10px;border:1px solid #e5e7eb">💳 Carte bancaire</td><td style="padding:6px 10px;border:1px solid #e5e7eb;text-align:right;font-weight:700;color:#2563eb">${caCarte.toFixed(2)} €</td></tr>
+    <tr style="background:#fef9f3"><td style="padding:6px 10px;border:1px solid #e5e7eb;font-weight:700">Total général</td><td style="padding:6px 10px;border:1px solid #e5e7eb;text-align:right;font-weight:900;color:#C8001A">${caMois.toFixed(2)} €</td></tr>
   </tbody>
 </table>
 
@@ -2849,7 +3103,7 @@ const ModulePerte = ({ articles, setArticles, pertes, setPertes, shop }) => {
 
 // ─── MODULE UTILISATEURS ─────────────────────────────────────────────────────
 
-const ModuleUtilisateurs = ({ users, setUsers, isAdmin, onRestore, logsModeEcole }) => {
+const ModuleUtilisateurs = ({ users, setUsers, isAdmin, onRestore, logsModeEcole, onNettoyage27mars }) => {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
   const [showMdp, setShowMdp] = useState(false);
@@ -2919,6 +3173,12 @@ const ModuleUtilisateurs = ({ users, setUsers, isAdmin, onRestore, logsModeEcole
           className={`text-xs px-3 py-1.5 rounded-lg border ${dark ? "border-red-800 text-red-400 hover:bg-red-900/30" : "border-red-200 text-red-500 hover:bg-red-50"} transition-colors`}>
           🗑 Réinitialiser toutes les données
         </button>
+        {onNettoyage27mars && (
+          <button onClick={onNettoyage27mars}
+            className={`text-xs px-3 py-1.5 rounded-lg border ${dark ? "border-orange-800 text-orange-400 hover:bg-orange-900/30" : "border-orange-200 text-orange-600 hover:bg-orange-50"} transition-colors`}>
+            🧹 Supprimer ventes 27/03 14h-15h + restaurer stocks
+          </button>
+        )}
       </div>
 
       {/* Restauration depuis backup (admin uniquement) */}
@@ -5481,6 +5741,33 @@ export default function App() {
   };
 
   // ── VENTE MIXTE (gère articles des deux boutiques) ──
+  const handleNettoyage27mars = () => {
+    const debut = new Date("2026-03-27T14:00:00").getTime();
+    const fin = new Date("2026-03-27T15:00:00").getTime();
+    const vpTarget = ventesPeda.filter(v => { const t = new Date(v.date).getTime(); return t >= debut && t < fin; });
+    const vlTarget = ventesLocale.filter(v => { const t = new Date(v.date).getTime(); return t >= debut && t < fin; });
+    const total = vpTarget.length + vlTarget.length;
+    if (total === 0) { alert("Aucune vente trouvée pour le 27/03/2026 entre 14h et 15h."); return; }
+    if (!window.confirm(`${total} vente(s) trouvée(s) le 27/03/2026 entre 14h et 15h.\nSupprimer et restaurer les stocks correspondants ?`)) return;
+    if (vpTarget.length > 0) {
+      setArticlesPeda(prev => {
+        let upd = [...prev];
+        vpTarget.forEach(v => v.items.forEach(item => { upd = upd.map(a => a.id === item.id ? { ...a, stock: a.stock + item.qte } : a); }));
+        return upd;
+      });
+      setVentesPeda(prev => prev.filter(v => { const t = new Date(v.date).getTime(); return !(t >= debut && t < fin); }));
+    }
+    if (vlTarget.length > 0) {
+      setArticlesLocale(prev => {
+        let upd = [...prev];
+        vlTarget.forEach(v => v.items.forEach(item => { upd = upd.map(a => a.id === item.id ? { ...a, stock: a.stock + item.qte } : a); }));
+        return upd;
+      });
+      setVentesLocale(prev => prev.filter(v => { const t = new Date(v.date).getTime(); return !(t >= debut && t < fin); }));
+    }
+    alert(`✅ ${total} vente(s) supprimée(s) et stocks restaurés.`);
+  };
+
   const handleVenteMixte = (panier, paiement, montantRemis, totalFinal, montantRemise = 0, shopTotaux = {}) => {
     const nowTs = Date.now();
     const dateStr = now();
@@ -5732,6 +6019,10 @@ export default function App() {
             remisesPeda={remisesPeda} remisesLocale={remisesLocale}
             userBoutiques={currentUser.boutiques}
             onVente={handleVenteMixte}
+            ventesPeda={ventesPeda} ventesLocale={ventesLocale}
+            setVentesPeda={setVentesPeda} setVentesLocale={setVentesLocale}
+            setArticlesPeda={setArticlesPeda} setArticlesLocale={setArticlesLocale}
+            isAdmin={isAdmin}
           />
         )}
         {onglet === "articles" && isGest && (
@@ -5772,7 +6063,7 @@ export default function App() {
           <ModuleFondCaisse fonds={fonds} setFonds={setFonds} ventes={ventes} shop={currentShop} />
         )}
         {onglet === "utilisateurs" && isAdmin && (
-          <ModuleUtilisateurs users={users} setUsers={setUsers} isAdmin={isAdmin} onRestore={handleRestore} logsModeEcole={logsModeEcole} />
+          <ModuleUtilisateurs users={users} setUsers={setUsers} isAdmin={isAdmin} onRestore={handleRestore} logsModeEcole={logsModeEcole} onNettoyage27mars={handleNettoyage27mars} />
         )}
       </main>
 
