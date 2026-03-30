@@ -7,7 +7,7 @@ import {
   ArrowLeft, ToggleLeft, ToggleRight, Filter, Download, ClipboardList,
   Moon, Sun, Home, TrendingUp, AlertCircle, Percent, Ticket,
   Thermometer, ShieldCheck, FileWarning, CalendarClock, Printer,
-  GraduationCap, Lock, FileText
+  GraduationCap, Lock, FileText, Menu
 } from "lucide-react";
 import { db, storage } from "./firebase";
 import { doc, setDoc, deleteDoc, onSnapshot, getDoc } from "firebase/firestore";
@@ -5895,6 +5895,7 @@ export default function App() {
   const [onglet, setOnglet] = useLocalStorage("bl_onglet", "caisse");
   const [darkMode, setDarkMode] = useLocalStorage("bl_darkMode", false);
   const [veille, setVeille] = useState(false);
+  const [menuOuvert, setMenuOuvert] = useState(false);
   const VEILLE_DELAI = 3 * 60 * 1000; // 3 minutes
   const veilleTimer = useRef(null);
 
@@ -6220,20 +6221,20 @@ export default function App() {
   const sc = shopConfig[currentShop] || shopConfig.peda;
 
   const ONGLETS = [
-    { id: "dashboard", label: "Tableau de bord", icon: <Home size={15} />, show: isGest },
-    { id: "caisse", label: "Caisse", icon: <ShoppingCart size={15} />, show: true },
-    { id: "fondcaisse", label: "Fond de caisse", icon: <Banknote size={15} />, show: isAdmin },
-    { id: "articles", label: "Articles", icon: <Tag size={15} />, show: isGest },
-    { id: "stocks", label: "Stocks", icon: <Package size={15} />, show: isGest },
-    { id: "inventaire", label: "Inventaire", icon: <ClipboardList size={15} />, show: isGest },
-    { id: "livraisons", label: "Livraisons", icon: <Truck size={15} />, show: isGest },
-    { id: "remises", label: "Remises", icon: <Ticket size={15} />, show: isGest },
-    { id: "operations", label: "Opér. Commerciales", icon: <CalendarClock size={15} />, show: isGest && currentShop === "peda" },
-    { id: "analyses", label: "Analyses", icon: <BarChart2 size={15} />, show: isGest || isComptable },
-    { id: "performance", label: "Performance", icon: <TrendingUp size={15} />, show: isGest },
-    { id: "pertes", label: "Pertes", icon: <AlertTriangle size={15} />, show: isGest },
-    { id: "hygiene", label: "Hygiène", icon: <ShieldCheck size={15} />, show: isGest },
-    { id: "utilisateurs", label: "Utilisateurs", icon: <Users size={15} />, show: isAdmin },
+    { id: "dashboard",    label: "Tableau de bord",      labelCourt: "Dashboard",   icon: <Home size={15} />,         iconLg: <Home size={17} />,         show: isGest },
+    { id: "caisse",       label: "Caisse",                labelCourt: "Caisse",      icon: <ShoppingCart size={15} />, iconLg: <ShoppingCart size={17} />, show: true },
+    { id: "fondcaisse",   label: "Fond de caisse",        labelCourt: "Fond",        icon: <Banknote size={15} />,     iconLg: <Banknote size={17} />,     show: isAdmin },
+    { id: "articles",     label: "Articles",              labelCourt: "Articles",    icon: <Tag size={15} />,          iconLg: <Tag size={17} />,          show: isGest },
+    { id: "stocks",       label: "Stocks",                labelCourt: "Stocks",      icon: <Package size={15} />,      iconLg: <Package size={17} />,      show: isGest },
+    { id: "inventaire",   label: "Inventaire",            labelCourt: "Inventaire",  icon: <ClipboardList size={15} />,iconLg: <ClipboardList size={17} />,show: isGest },
+    { id: "livraisons",   label: "Livraisons",            labelCourt: "Livraisons",  icon: <Truck size={15} />,        iconLg: <Truck size={17} />,        show: isGest },
+    { id: "remises",      label: "Remises",               labelCourt: "Remises",     icon: <Ticket size={15} />,       iconLg: <Ticket size={17} />,       show: isGest },
+    { id: "operations",   label: "Opér. Commerciales",    labelCourt: "Opérations",  icon: <CalendarClock size={15} />,iconLg: <CalendarClock size={17} />,show: isGest && currentShop === "peda" },
+    { id: "analyses",     label: "Analyses",              labelCourt: "Analyses",    icon: <BarChart2 size={15} />,    iconLg: <BarChart2 size={17} />,    show: isGest || isComptable },
+    { id: "performance",  label: "Performance",           labelCourt: "Perfs",       icon: <TrendingUp size={15} />,   iconLg: <TrendingUp size={17} />,   show: isGest },
+    { id: "pertes",       label: "Pertes",                labelCourt: "Pertes",      icon: <AlertTriangle size={15} />,iconLg: <AlertTriangle size={17} />,show: isGest },
+    { id: "hygiene",      label: "Hygiène",               labelCourt: "Hygiène",     icon: <ShieldCheck size={15} />,  iconLg: <ShieldCheck size={17} />,  show: isGest },
+    { id: "utilisateurs", label: "Utilisateurs",          labelCourt: "Utilis.",     icon: <Users size={15} />,        iconLg: <Users size={17} />,        show: isAdmin },
   ].filter(o => o.show);
 
   // S'assurer que l'onglet actif est accessible
@@ -6272,9 +6273,9 @@ export default function App() {
             </div>
           )}
 
-          {/* Utilisateur + Dark mode toggle */}
-          <div className="flex items-center gap-3">
-            <div className="text-right hidden sm:block">
+          {/* Utilisateur + actions — masqués sur mobile (accessibles via sidebar) */}
+          <div className="hidden md:flex items-center gap-3">
+            <div className="text-right hidden lg:block">
               <div className="text-sm font-semibold">{currentUser.prenom} {currentUser.nom}</div>
               <div className="text-xs opacity-60 capitalize flex items-center gap-1 justify-end">
                 {currentUser.role}
@@ -6310,6 +6311,15 @@ export default function App() {
               </button>
             )}
           </div>
+
+          {/* Bouton hamburger — visible uniquement sur mobile */}
+          <button
+            className="md:hidden flex items-center justify-center w-9 h-9 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
+            onClick={() => setMenuOuvert(true)}
+            aria-label="Ouvrir le menu"
+          >
+            <Menu size={20} />
+          </button>
         </div>
       </header>
 
@@ -6322,21 +6332,115 @@ export default function App() {
         </div>
       )}
 
-      {/* NAVIGATION */}
-      <nav className={`border-b shadow-sm ${darkMode ? "bg-gray-900 border-gray-700" : "bg-white border-gray-200"}`}>
-        <div className="max-w-7xl mx-auto px-4 flex gap-1">
+      {/* NAVIGATION TABLETTE + BUREAU — cachée sur mobile */}
+      <nav className={`hidden md:block border-b shadow-sm ${darkMode ? "bg-gray-900 border-gray-700" : "bg-white border-gray-200"}`}>
+        <div className="max-w-7xl mx-auto px-2 flex gap-0.5 overflow-x-auto scrollbar-hide">
           {ONGLETS.map(o => (
             <button key={o.id} onClick={() => setOnglet(o.id)}
-              className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              className={`flex items-center gap-1.5 px-3 lg:px-4 py-3 text-xs lg:text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${
                 onglet === o.id
                   ? `${sc.border} ${sc.text}`
                   : `border-transparent ${darkMode ? "text-gray-400 hover:text-gray-200 hover:border-gray-500" : "text-gray-500 hover:text-gray-700 hover:border-gray-300"}`
               }`}>
-              {o.icon} {o.label}
+              {o.icon}
+              <span className="hidden lg:inline">{o.label}</span>
+              <span className="lg:hidden">{o.labelCourt}</span>
             </button>
           ))}
         </div>
       </nav>
+
+      {/* MENU LATÉRAL MOBILE */}
+      {menuOuvert && (
+        <>
+          {/* Overlay sombre */}
+          <div
+            className="fixed inset-0 bg-black/50 z-40 md:hidden"
+            onClick={() => setMenuOuvert(false)}
+          />
+          {/* Panneau latéral */}
+          <div className={`fixed top-0 right-0 h-full w-72 z-50 flex flex-col shadow-2xl md:hidden ${darkMode ? "bg-gray-900" : "bg-white"}`}
+            style={{animation: "slideInRight 0.22s ease-out"}}>
+
+            {/* En-tête sidebar */}
+            <div className="flex items-center justify-between px-4 py-3 text-white shrink-0"
+              style={{background: currentShop === "locale" ? "#0f766e" : "#F07800"}}>
+              <div className="flex items-center gap-2 font-bold text-sm">
+                {sc.icon} {sc.label}
+              </div>
+              <button onClick={() => setMenuOuvert(false)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
+                aria-label="Fermer le menu">
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Infos utilisateur */}
+            <div className={`px-4 py-3 border-b shrink-0 ${darkMode ? "border-gray-700 bg-gray-800" : "border-gray-100 bg-gray-50"}`}>
+              <div className={`text-sm font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>
+                {currentUser.prenom} {currentUser.nom}
+              </div>
+              <div className={`text-xs capitalize flex items-center gap-1 mt-0.5 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
+                {currentUser.role}
+                <span className="opacity-60">· ☁️</span>
+              </div>
+            </div>
+
+            {/* Liste des onglets */}
+            <div className="flex-1 overflow-y-auto py-1">
+              {ONGLETS.map(o => (
+                <button key={o.id}
+                  onClick={() => { setOnglet(o.id); setMenuOuvert(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors text-left ${
+                    onglet === o.id
+                      ? currentShop === "locale"
+                        ? `${darkMode ? "bg-teal-900/30 text-teal-400 border-r-4 border-teal-500" : "bg-teal-50 text-teal-700 border-r-4 border-teal-600"}`
+                        : `${darkMode ? "bg-orange-900/30 text-orange-400 border-r-4 border-orange-500" : "bg-orange-50 text-orange-700 border-r-4 border-orange-500"}`
+                      : darkMode ? "text-gray-300 hover:bg-gray-800" : "text-gray-700 hover:bg-gray-50"
+                  }`}>
+                  <span className="shrink-0">{o.iconLg}</span>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Pied de sidebar : actions */}
+            <div className={`border-t shrink-0 p-3 space-y-2 ${darkMode ? "border-gray-700" : "border-gray-200"}`}>
+              {isGest && (
+                <button
+                  onClick={() => { setModalEcole(modeEcole ? "desactiver" : "activer"); setMenuOuvert(false); }}
+                  className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-bold transition-colors ${
+                    modeEcole ? "bg-yellow-400 text-yellow-900" : darkMode ? "bg-gray-700 text-gray-300 hover:bg-gray-600" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}>
+                  <GraduationCap size={15} />
+                  {modeEcole ? "Mode École ACTIF — désactiver" : "Activer le Mode École"}
+                </button>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setDarkMode(dm => !dm)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                    darkMode ? "bg-gray-700 text-gray-300 hover:bg-gray-600" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}>
+                  {darkMode ? <Sun size={14} /> : <Moon size={14} />}
+                  {darkMode ? "Mode clair" : "Mode sombre"}
+                </button>
+                {currentUser.role === "ecole" ? (
+                  <button onClick={() => { setModalQuitterEcole(true); setMenuOuvert(false); }}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-red-100 text-red-700 hover:bg-red-200 transition-colors">
+                    <LogOut size={14} /> Quitter
+                  </button>
+                ) : (
+                  <button onClick={() => { handleLogout(); setMenuOuvert(false); }}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-red-100 text-red-700 hover:bg-red-200 transition-colors">
+                    <LogOut size={14} /> Déco.
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* CONTENU */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-5">
