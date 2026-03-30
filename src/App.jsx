@@ -391,7 +391,7 @@ const LoginScreen = ({ onLogin }) => {
 
 // ─── MODULE CAISSE ──────────────────────────────────────────────────────────
 
-const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesLocale = [], userBoutiques, onVente, ventesPeda = [], ventesLocale = [], setVentesPeda, setVentesLocale, setArticlesPeda, setArticlesLocale, isAdmin = false }) => {
+const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesLocale = [], operationsPeda = [], userBoutiques, onVente, ventesPeda = [], ventesLocale = [], setVentesPeda, setVentesLocale, setArticlesPeda, setArticlesLocale, isAdmin = false }) => {
   const [panier, setPanier] = useState([]);
   const [recherche, setRecherche] = useState("");
   const [shopFiltre, setShopFiltre] = useState("Toutes");
@@ -428,13 +428,24 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
     remisesLocale.filter(r => r.actif && (!r.dateDebut || r.dateDebut <= today) && (!r.dateFin || r.dateFin >= today))
   , [remisesLocale, today]);
 
+  // Opération commerciale active (peda uniquement)
+  const operationActive = useMemo(() =>
+    operationsPeda.find(op => op.dateDebut <= today && op.dateFin >= today) || null
+  , [operationsPeda, today]);
+
+  const promoArticlesMap = useMemo(() => {
+    if (!operationActive) return {};
+    const map = {};
+    (operationActive.articles || []).forEach(a => { map[a.articleId] = a.prixPromo; });
+    return map;
+  }, [operationActive]);
+
   const getPrixRemise = useCallback((art) => {
     const remisesActives = art._shop === "peda" ? remisesActivePeda : remisesActiveLocale;
     const applicable = remisesActives.filter(r =>
       (r.cible === "article" && parseInt(r.articleId) === art.id) ||
       (r.cible === "categorie" && r.categorie === art.categorie)
     );
-    if (applicable.length === 0) return null;
     let meilleur = null;
     let meilleurEco = 0;
     applicable.forEach(r => {
@@ -448,10 +459,18 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
       }
       if (eco > meilleurEco) { meilleurEco = eco; meilleur = r; }
     });
+    // Vérifier si l'article est dans une opération commerciale active (peda uniquement)
+    if (art._shop === "peda" && promoArticlesMap[art.id] !== undefined) {
+      const prixOp = promoArticlesMap[art.id];
+      const ecoOp = r2(art.prix - prixOp);
+      if (ecoOp > meilleurEco) {
+        return { prix: Math.max(0, prixOp), fromOperation: true, operationNom: operationActive?.nom, economie: ecoOp };
+      }
+    }
     if (!meilleur || meilleurEco === 0) return null;
     const nvPrix = r2(art.prix - meilleurEco);
     return { prix: Math.max(0, nvPrix), remise: meilleur, economie: meilleurEco };
-  }, [remisesActivePeda, remisesActiveLocale]);
+  }, [remisesActivePeda, remisesActiveLocale, promoArticlesMap, operationActive]);
 
   const remisePanierPeda = useMemo(() => remisesActivePeda.find(r => r.cible === "panier") || null, [remisesActivePeda]);
   const remisePanierLocale = useMemo(() => remisesActiveLocale.find(r => r.cible === "panier") || null, [remisesActiveLocale]);
@@ -633,7 +652,13 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
         <div className="flex items-start justify-between gap-1 mb-1">
           <div>
             <span className={`text-sm font-medium leading-tight ${d.text}`}>{item.nom}</span>
-            {remiseInfo && <div className="text-xs text-green-500 font-medium">{remiseInfo.remise.nom}</div>}
+            {remiseInfo && remiseInfo.fromOperation && (
+              <div className="flex items-center gap-1">
+                <span className="text-xs font-bold bg-red-500 text-white px-1.5 py-0.5 rounded">PROMO</span>
+                <span className="text-xs text-red-400 font-medium">{remiseInfo.operationNom}</span>
+              </div>
+            )}
+            {remiseInfo && !remiseInfo.fromOperation && <div className="text-xs text-green-500 font-medium">{remiseInfo.remise.nom}</div>}
           </div>
           <button onClick={() => supprimerDuPanier(item.id, item._shop)} className={`shrink-0 ${d.textMuted} hover:text-red-500`}>
             <Trash2 size={13} />
@@ -650,7 +675,7 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
             </button>
           </div>
           <div className="text-right">
-            <span className={`text-sm font-bold ${remiseInfo ? "text-green-500" : itemColor === "teal" ? "text-teal-500" : "text-orange-500"}`}>
+            <span className={`text-sm font-bold ${remiseInfo ? (remiseInfo.fromOperation ? "text-red-500" : "text-green-500") : itemColor === "teal" ? "text-teal-500" : "text-orange-500"}`}>
               {fmt(r2(prixEffectif * item.qte))}
             </span>
             {remiseInfo && item.qte > 0 && (
@@ -725,7 +750,7 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
             return (
               <button key={`${art._shop}-${art.id}`} onClick={() => ajouterAuPanier(art)}
                 className={`${d.card} border-2 rounded-xl p-2 text-left transition-all hover:shadow-md active:scale-95 flex flex-col ${
-                  remiseInfo ? "border-green-500" : artColor === "teal" ? "hover:border-teal-400" : "hover:border-orange-400"
+                  remiseInfo ? (remiseInfo.fromOperation ? "border-red-500" : "border-green-500") : artColor === "teal" ? "hover:border-teal-400" : "hover:border-orange-400"
                 }`}>
                 <div className={`w-full h-14 rounded-lg mb-2 flex items-center justify-center overflow-hidden ${dark ? "bg-gray-700" : "bg-gray-50"}`}>
                   {art.image
@@ -744,12 +769,16 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
                 <div className={`font-semibold text-xs leading-tight mt-0.5 mb-1.5 ${d.text}`}>{art.nom}</div>
                 {remiseInfo ? (
                   <div className="mt-auto">
-                    <div className="flex items-center gap-1">
-                      <span className="text-sm font-black text-green-500">{fmt(remiseInfo.prix)}</span>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className={`text-sm font-black ${remiseInfo.fromOperation ? "text-red-500" : "text-green-500"}`}>{fmt(remiseInfo.prix)}</span>
                       <span className={`text-xs line-through ${d.textMuted}`}>{fmt(art.prix)}</span>
+                      {remiseInfo.fromOperation && <span className="text-xs font-bold bg-red-500 text-white px-1 rounded">PROMO</span>}
                     </div>
-                    <div className="text-xs text-green-500 font-medium">
-                      {remiseInfo.remise.type === "2plus1" ? "2+1 offert" : remiseInfo.remise.type === "pourcentage" ? `-${remiseInfo.remise.valeur}%` : `-${fmt(remiseInfo.economie)}`} — {remiseInfo.remise.nom}
+                    <div className={`text-xs font-medium ${remiseInfo.fromOperation ? "text-red-400" : "text-green-500"}`}>
+                      {remiseInfo.fromOperation
+                        ? remiseInfo.operationNom
+                        : remiseInfo.remise.type === "2plus1" ? "2+1 offert" : remiseInfo.remise.type === "pourcentage" ? `-${remiseInfo.remise.valeur}%` : `-${fmt(remiseInfo.economie)}`}
+                      {!remiseInfo.fromOperation && ` — ${remiseInfo.remise.nom}`}
                     </div>
                   </div>
                 ) : (
@@ -1768,7 +1797,7 @@ const ModuleLivraisons = ({ articles, setArticles, livraisons, setLivraisons, sh
 
 // ─── MODULE ANALYSES ─────────────────────────────────────────────────────────
 
-const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId, onReset, pertes = [], remises = [], isComptable = false }) => {
+const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId, onReset, pertes = [], remises = [], isComptable = false, operations = [] }) => {
   const [periode, setPeriode] = useState("today");
   const [userFiltre, setUserFiltre] = useState("all");
   const [confirmReset, setConfirmReset] = useState(false);
@@ -2694,6 +2723,84 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
           </table>
         </div>
       </div>
+
+      {/* ══ OPÉRATIONS COMMERCIALES ══════════════════════════════════════════ */}
+      {operations.length > 0 && (
+        <div className={`${d.card} border rounded-xl overflow-hidden`}>
+          <div className={`px-4 py-3 border-b ${d.sectionHead} flex items-center gap-2`}>
+            <CalendarClock size={16} className="text-orange-500" />
+            <span className={`font-semibold text-sm ${d.text}`}>Résultats des opérations commerciales</span>
+          </div>
+          <div className="divide-y">
+            {[...operations].sort((a, b) => b.id - a.id).map(op => {
+              const today_ = new Date().toISOString().split("T")[0];
+              const statut = op.dateFin < today_ ? "terminée" : op.dateDebut > today_ ? "à venir" : "active";
+              const debutDate = new Date(op.dateDebut + "T00:00:00");
+              const finDate = new Date(op.dateFin + "T23:59:59");
+              const ventesOp = ventes.filter(v => {
+                const d = new Date(v.date);
+                return d >= debutDate && d <= finDate && !v.statut;
+              });
+              const caOp = r2(ventesOp.reduce((s, v) => s + v.total, 0));
+              const nbVentesOp = ventesOp.length;
+              // Articles vendus pendant l'opération (ids concernés)
+              const artIds = new Set((op.articles || []).map(a => a.articleId));
+              const statsArticles = {};
+              ventesOp.forEach(v => v.items.forEach(item => {
+                if (artIds.has(item.id)) {
+                  if (!statsArticles[item.id]) statsArticles[item.id] = { nom: item.nom, qte: 0, ca: 0 };
+                  statsArticles[item.id].qte += item.qte;
+                  statsArticles[item.id].ca = r2(statsArticles[item.id].ca + item.prix * item.qte);
+                }
+              }));
+              const topArticles = Object.values(statsArticles).sort((a, b) => b.qte - a.qte).slice(0, 5);
+              const fmtD = (s) => { if (!s) return "—"; const [y, m, j] = s.split("-"); return `${j}/${m}/${y}`; };
+              return (
+                <div key={op.id} className="p-4">
+                  <div className="flex items-center gap-2 flex-wrap mb-3">
+                    <span className={`font-bold text-sm ${d.text}`}>{op.nom}</span>
+                    {statut === "active" && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-500 text-white">Active</span>}
+                    {statut === "à venir" && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-500 text-white">À venir</span>}
+                    {statut === "terminée" && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-400 text-white">Terminée</span>}
+                    <span className={`text-xs ${d.textMuted}`}>{fmtD(op.dateDebut)} → {fmtD(op.dateFin)}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    {[
+                      { label: "CA généré", val: `${caOp.toFixed(2)} €`, cls: "text-orange-500" },
+                      { label: "Nb ventes", val: nbVentesOp, cls: d.text },
+                      { label: "Articles promo", val: (op.articles || []).length, cls: d.text },
+                    ].map((k, i) => (
+                      <div key={i} className={`${dark ? "bg-gray-700" : "bg-gray-50"} rounded-lg p-3 text-center`}>
+                        <div className={`text-xs ${d.textMuted} mb-0.5`}>{k.label}</div>
+                        <div className={`text-sm font-bold ${k.cls}`}>{k.val}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {topArticles.length > 0 && (
+                    <div>
+                      <div className={`text-xs font-medium ${d.textSub} mb-1.5`}>Articles les plus vendus pendant l'opération</div>
+                      <div className="space-y-1">
+                        {topArticles.map((a, i) => (
+                          <div key={i} className="flex items-center justify-between">
+                            <span className={`text-xs ${d.text}`}>{a.nom}</span>
+                            <span className={`text-xs font-medium ${d.textSub}`}>{a.qte} vendu{a.qte > 1 ? "s" : ""} — {a.ca.toFixed(2)} €</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {topArticles.length === 0 && statut !== "à venir" && (
+                    <p className={`text-xs ${d.textMuted}`}>Aucune vente enregistrée pendant cette opération.</p>
+                  )}
+                  {statut === "à venir" && (
+                    <p className={`text-xs ${d.textMuted}`}>L'opération n'a pas encore démarré.</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {confirmReset && (
         <Modal title="Réinitialiser les ventes" onClose={() => setConfirmReset(false)}>
@@ -3650,6 +3757,235 @@ const ModuleInventaire = ({ articles, setArticles, inventaires, setInventaires, 
 };
 
 // ─── MODULE REMISES ──────────────────────────────────────────────────────────
+
+// ─── MODULE OPÉRATIONS COMMERCIALES ─────────────────────────────────────────
+
+const ModuleOperations = ({ articles, operations, setOperations }) => {
+  const dark = useDark();
+  const d = dk(dark);
+  const [modal, setModal] = useState(null);
+  const [alerte, setAlerte] = useState(null);
+  const [form, setForm] = useState({});
+  const [formArticles, setFormArticles] = useState([]);
+
+  const today = new Date().toISOString().split("T")[0];
+
+  const getStatut = (op) => {
+    if (op.dateFin < today) return "terminée";
+    if (op.dateDebut > today) return "à venir";
+    return "active";
+  };
+
+  const statutBadge = (op) => {
+    const s = getStatut(op);
+    if (s === "active") return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-green-500 text-white">Active</span>;
+    if (s === "à venir") return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-500 text-white">À venir</span>;
+    return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-400 text-white">Terminée</span>;
+  };
+
+  const ouvrirCreer = () => {
+    setForm({ nom: "", dateDebut: today, dateFin: "" });
+    setFormArticles([]);
+    setAlerte(null);
+    setModal("form");
+  };
+
+  const ouvrirModifier = (op) => {
+    setForm({ ...op });
+    setFormArticles([...(op.articles || [])]);
+    setAlerte(null);
+    setModal("form");
+  };
+
+  const supprimerOperation = (id) => {
+    setOperations(prev => prev.filter(op => op.id !== id));
+  };
+
+  const ajouterArticle = (artId) => {
+    if (!artId) return;
+    const id = parseInt(artId);
+    if (formArticles.find(a => a.articleId === id)) return;
+    const art = articles.find(a => a.id === id);
+    if (!art) return;
+    setFormArticles(prev => [...prev, { articleId: id, prixPromo: art.prix }]);
+  };
+
+  const retirerArticle = (artId) => setFormArticles(prev => prev.filter(a => a.articleId !== artId));
+
+  const modifierPrixPromo = (artId, valeur) => {
+    setFormArticles(prev => prev.map(a => a.articleId === artId ? { ...a, prixPromo: parseFloat(valeur) || 0 } : a));
+  };
+
+  const sauvegarder = () => {
+    if (!form.nom?.trim()) { setAlerte({ type: "error", msg: "Le nom de l'opération est obligatoire." }); return; }
+    if (!form.dateDebut) { setAlerte({ type: "error", msg: "La date de début est obligatoire." }); return; }
+    if (!form.dateFin) { setAlerte({ type: "error", msg: "La date de fin est obligatoire." }); return; }
+    if (form.dateFin < form.dateDebut) { setAlerte({ type: "error", msg: "La date de fin doit être après la date de début." }); return; }
+    if (formArticles.length === 0) { setAlerte({ type: "error", msg: "Ajoutez au moins un article." }); return; }
+    for (const a of formArticles) {
+      if (isNaN(a.prixPromo) || a.prixPromo < 0) { setAlerte({ type: "error", msg: "Les prix promotionnels doivent être positifs." }); return; }
+    }
+    const op = { ...form, articles: formArticles };
+    if (form.id) {
+      setOperations(prev => prev.map(o => o.id === form.id ? op : o));
+      setAlerte({ type: "success", msg: "Opération modifiée." });
+    } else {
+      setOperations(prev => [...prev, { ...op, id: Date.now() }]);
+      setAlerte({ type: "success", msg: "Opération créée." });
+    }
+    setModal(null);
+  };
+
+  const articlesActifs = articles.filter(a => a.actif).sort((a, b) => a.nom.localeCompare(b.nom));
+  const fmtD = (s) => { if (!s) return "—"; const [y, m, j] = s.split("-"); return `${j}/${m}/${y}`; };
+
+  return (
+    <div className="space-y-4">
+      <div className={`${d.card} border rounded-2xl p-4`}>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className={`text-lg font-bold ${d.text} flex items-center gap-2`}>
+              <CalendarClock size={20} className="text-orange-500" /> Opérations Commerciales
+            </h2>
+            <p className={`text-sm ${d.textSub} mt-0.5`}>Promotions temporaires sur des articles sélectionnés — Boutique Pédagogique</p>
+          </div>
+          <Btn variant="primary" shop="peda" onClick={ouvrirCreer}>
+            <Plus size={15} /> Nouvelle opération
+          </Btn>
+        </div>
+        {alerte && <Alert type={alerte.type} msg={alerte.msg} onClose={() => setAlerte(null)} />}
+
+        {operations.length === 0 ? (
+          <div className={`text-center py-12 ${d.textMuted}`}>
+            <CalendarClock size={40} className="mx-auto mb-2 opacity-30" />
+            <p className="text-sm">Aucune opération commerciale créée</p>
+            <p className="text-xs mt-1 opacity-60">Créez une opération pour appliquer des prix promotionnels temporaires en caisse</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {[...operations].sort((a, b) => {
+              const ordre = { active: 0, "à venir": 1, terminée: 2 };
+              return (ordre[getStatut(a)] - ordre[getStatut(b)]) || b.id - a.id;
+            }).map(op => {
+              const artCount = (op.articles || []).length;
+              return (
+                <div key={op.id} className={`${d.card} border rounded-xl p-4 flex items-start justify-between gap-3`}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className={`font-bold text-sm ${d.text}`}>{op.nom}</span>
+                      {statutBadge(op)}
+                    </div>
+                    <div className={`text-xs ${d.textSub}`}>
+                      Du {fmtD(op.dateDebut)} au {fmtD(op.dateFin)}
+                    </div>
+                    <div className={`text-xs ${d.textMuted} mt-1`}>
+                      {artCount} article{artCount > 1 ? "s" : ""} en promotion
+                      {getStatut(op) === "active" && (
+                        <span className="ml-2 text-green-500 font-medium">● Prix PROMO actifs en caisse</span>
+                      )}
+                    </div>
+                    {getStatut(op) === "active" && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {(op.articles || []).map(fa => {
+                          const art = articles.find(a => a.id === fa.articleId);
+                          if (!art) return null;
+                          return (
+                            <span key={fa.articleId} className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                              {art.nom} → {fmt(fa.prixPromo)}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button onClick={() => ouvrirModifier(op)}
+                      className={`p-2 rounded-lg ${d.btnGhost}`}>
+                      <Edit2 size={14} />
+                    </button>
+                    <button onClick={() => supprimerOperation(op.id)}
+                      className={`p-2 rounded-lg text-red-500 ${dark ? "hover:bg-red-900/20" : "hover:bg-red-50"}`}>
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {modal === "form" && (
+        <Modal title={form.id ? "Modifier l'opération" : "Nouvelle opération commerciale"} onClose={() => setModal(null)}>
+          <div className="space-y-4">
+            {alerte && <Alert type={alerte.type} msg={alerte.msg} onClose={() => setAlerte(null)} />}
+            <Input label="Nom de l'opération" placeholder="Ex : Vente flash Saint-Valentin" value={form.nom || ""} onChange={e => setForm(p => ({ ...p, nom: e.target.value }))} />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={`block text-xs font-medium mb-1 ${d.label}`}>Date de début</label>
+                <input type="date" value={form.dateDebut || ""} onChange={e => setForm(p => ({ ...p, dateDebut: e.target.value }))}
+                  className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 ${d.input}`} />
+              </div>
+              <div>
+                <label className={`block text-xs font-medium mb-1 ${d.label}`}>Date de fin</label>
+                <input type="date" value={form.dateFin || ""} onChange={e => setForm(p => ({ ...p, dateFin: e.target.value }))}
+                  className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 ${d.input}`} />
+              </div>
+            </div>
+
+            <div>
+              <label className={`block text-xs font-medium mb-1 ${d.label}`}>Ajouter un article</label>
+              <select onChange={e => { ajouterArticle(e.target.value); e.target.value = ""; }}
+                className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 ${d.input}`}
+                defaultValue="">
+                <option value="">Sélectionner un article à ajouter...</option>
+                {articlesActifs
+                  .filter(a => !formArticles.find(fa => fa.articleId === a.id))
+                  .map(a => (
+                    <option key={a.id} value={a.id}>{a.nom} — {fmt(a.prix)}</option>
+                  ))}
+              </select>
+            </div>
+
+            {formArticles.length > 0 && (
+              <div>
+                <label className={`block text-xs font-medium mb-2 ${d.label}`}>Articles en promotion ({formArticles.length})</label>
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {formArticles.map(fa => {
+                    const art = articles.find(a => a.id === fa.articleId);
+                    if (!art) return null;
+                    return (
+                      <div key={fa.articleId} className={`flex items-center gap-2 p-2 rounded-lg ${dark ? "bg-gray-700" : "bg-gray-50"}`}>
+                        <span className={`flex-1 text-xs font-medium ${d.text}`}>{art.nom}</span>
+                        <span className={`text-xs ${d.textMuted}`}>{fmt(art.prix)}</span>
+                        <span className={`text-xs ${d.textMuted}`}>→</span>
+                        <input type="number" min="0" step="0.01" value={fa.prixPromo}
+                          onChange={e => modifierPrixPromo(fa.articleId, e.target.value)}
+                          className={`w-20 border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-orange-400 ${d.input}`}
+                        />
+                        <span className={`text-xs ${d.textMuted}`}>€</span>
+                        <button onClick={() => retirerArticle(fa.articleId)} className="text-red-400 hover:text-red-600"><X size={13} /></button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <Btn variant="primary" shop="peda" onClick={sauvegarder}>
+                <Save size={15} /> {form.id ? "Enregistrer" : "Créer l'opération"}
+              </Btn>
+              <Btn variant="secondary" onClick={() => setModal(null)}>Annuler</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+// ─── MODULE REMISES ───────────────────────────────────────────────────────────
 
 const ModuleRemises = ({ articles, remises, setRemises, shop }) => {
   const dark = useDark();
@@ -5591,6 +5927,7 @@ export default function App() {
   const [inventairesLocale, setInventairesLocale] = useFirestoreState("inventaires_locale", []);
   const [remisesPeda, setRemisesPeda] = useFirestoreState("remises_peda", []);
   const [remisesLocale, setRemisesLocale] = useFirestoreState("remises_locale", []);
+  const [operationsPeda, setOperationsPeda] = useFirestoreState("operations_peda", []);
   const [pertesPeda, setPertesPeda] = useFirestoreState("pertes_peda", []);
   const [pertesLocale, setPertesLocale] = useFirestoreState("pertes_locale", []);
   const [fondsPeda, setFondsPeda] = useFirestoreState("fonds_peda", []);
@@ -5891,6 +6228,7 @@ export default function App() {
     { id: "inventaire", label: "Inventaire", icon: <ClipboardList size={15} />, show: isGest },
     { id: "livraisons", label: "Livraisons", icon: <Truck size={15} />, show: isGest },
     { id: "remises", label: "Remises", icon: <Ticket size={15} />, show: isGest },
+    { id: "operations", label: "Opér. Commerciales", icon: <CalendarClock size={15} />, show: isGest && currentShop === "peda" },
     { id: "analyses", label: "Analyses", icon: <BarChart2 size={15} />, show: isGest || isComptable },
     { id: "performance", label: "Performance", icon: <TrendingUp size={15} />, show: isGest },
     { id: "pertes", label: "Pertes", icon: <AlertTriangle size={15} />, show: isGest },
@@ -6017,6 +6355,7 @@ export default function App() {
           <ModuleCaisse
             articlesPeda={articlesPeda} articlesLocale={articlesLocale}
             remisesPeda={remisesPeda} remisesLocale={remisesLocale}
+            operationsPeda={operationsPeda}
             userBoutiques={currentUser.boutiques}
             onVente={handleVenteMixte}
             ventesPeda={ventesPeda} ventesLocale={ventesLocale}
@@ -6040,9 +6379,13 @@ export default function App() {
         {onglet === "remises" && isGest && (
           <ModuleRemises articles={articles} remises={remises} setRemises={setRemises} shop={currentShop} />
         )}
+        {onglet === "operations" && isGest && currentShop === "peda" && (
+          <ModuleOperations articles={articlesPeda} operations={operationsPeda} setOperations={setOperationsPeda} />
+        )}
         {onglet === "analyses" && (isGest || isComptable) && (
           <ModuleAnalyses ventes={ventes} articles={articles} users={users} shop={currentShop} isAdmin={isAdmin} currentUserId={currentUser.id}
-            onReset={() => setVentes([])} pertes={pertes} remises={remises} isComptable={isComptable} />
+            onReset={() => setVentes([])} pertes={pertes} remises={remises} isComptable={isComptable}
+            operations={currentShop === "peda" ? operationsPeda : []} />
         )}
         {onglet === "performance" && isGest && (
           <ModulePerformance ventes={ventes} articles={articles} shop={currentShop} />
