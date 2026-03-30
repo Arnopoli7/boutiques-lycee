@@ -6051,6 +6051,9 @@ export default function App() {
   const [darkMode, setDarkMode] = useLocalStorage("bl_darkMode", false);
   const [veille, setVeille] = useState(false);
   const [menuOuvert, setMenuOuvert] = useState(false);
+  const [navCompact, setNavCompact] = useState(false);
+  const navRef = useRef(null);
+  const measureRef = useRef(null);
   const VEILLE_DELAI = 3 * 60 * 1000; // 3 minutes
   const veilleTimer = useRef(null);
 
@@ -6376,24 +6379,36 @@ export default function App() {
   const sc = shopConfig[currentShop] || shopConfig.peda;
 
   const ONGLETS = [
-    { id: "dashboard",    label: "Tableau de bord",      labelCourt: "Dashboard",   icon: <Home size={15} />,         iconLg: <Home size={17} />,         show: isGest },
-    { id: "caisse",       label: "Caisse",                labelCourt: "Caisse",      icon: <ShoppingCart size={15} />, iconLg: <ShoppingCart size={17} />, show: true },
-    { id: "fondcaisse",   label: "Fond de caisse",        labelCourt: "Fond",        icon: <Banknote size={15} />,     iconLg: <Banknote size={17} />,     show: isAdmin },
-    { id: "articles",     label: "Articles",              labelCourt: "Articles",    icon: <Tag size={15} />,          iconLg: <Tag size={17} />,          show: isGest },
-    { id: "stocks",       label: "Stocks",                labelCourt: "Stocks",      icon: <Package size={15} />,      iconLg: <Package size={17} />,      show: isGest },
-    { id: "inventaire",   label: "Inventaire",            labelCourt: "Inventaire",  icon: <ClipboardList size={15} />,iconLg: <ClipboardList size={17} />,show: isGest },
-    { id: "livraisons",   label: "Livraisons",            labelCourt: "Livraisons",  icon: <Truck size={15} />,        iconLg: <Truck size={17} />,        show: isGest },
-    { id: "remises",      label: "Remises",               labelCourt: "Remises",     icon: <Ticket size={15} />,       iconLg: <Ticket size={17} />,       show: isGest },
-    { id: "operations",   label: "Opér. Commerciales",    labelCourt: "Opérations",  icon: <CalendarClock size={15} />,iconLg: <CalendarClock size={17} />,show: isGest && currentShop === "peda" },
-    { id: "analyses",     label: "Analyses",              labelCourt: "Analyses",    icon: <BarChart2 size={15} />,    iconLg: <BarChart2 size={17} />,    show: isGest || isComptable },
-    { id: "performance",  label: "Performance",           labelCourt: "Perfs",       icon: <TrendingUp size={15} />,   iconLg: <TrendingUp size={17} />,   show: isGest },
-    { id: "pertes",       label: "Pertes",                labelCourt: "Pertes",      icon: <AlertTriangle size={15} />,iconLg: <AlertTriangle size={17} />,show: isGest },
-    { id: "hygiene",      label: "Hygiène",               labelCourt: "Hygiène",     icon: <ShieldCheck size={15} />,  iconLg: <ShieldCheck size={17} />,  show: isGest },
-    { id: "utilisateurs", label: "Utilisateurs",          labelCourt: "Utilis.",     icon: <Users size={15} />,        iconLg: <Users size={17} />,        show: isAdmin },
+    { id: "dashboard",    label: "Tableau de bord",    labelNav: "Accueil",    icon: <Home size={15} /> ,         show: isGest },
+    { id: "caisse",       label: "Caisse",              labelNav: "Caisse",     icon: <ShoppingCart size={15} />,  show: true },
+    { id: "fondcaisse",   label: "Fond de caisse",      labelNav: "Fond",       icon: <Banknote size={15} />,      show: isAdmin },
+    { id: "articles",     label: "Articles",            labelNav: "Articles",   icon: <Tag size={15} />,           show: isGest },
+    { id: "stocks",       label: "Stocks",              labelNav: "Stocks",     icon: <Package size={15} />,       show: isGest },
+    { id: "inventaire",   label: "Inventaire",          labelNav: "Invt.",      icon: <ClipboardList size={15} />, show: isGest },
+    { id: "livraisons",   label: "Livraisons",          labelNav: "Livr.",      icon: <Truck size={15} />,         show: isGest },
+    { id: "remises",      label: "Remises",             labelNav: "Remises",    icon: <Ticket size={15} />,        show: isGest },
+    { id: "operations",   label: "Opér. Commerciales",  labelNav: "Promos",     icon: <CalendarClock size={15} />, show: isGest && currentShop === "peda" },
+    { id: "analyses",     label: "Analyses",            labelNav: "Analyses",   icon: <BarChart2 size={15} />,     show: isGest || isComptable },
+    { id: "performance",  label: "Performance",         labelNav: "Perfs",      icon: <TrendingUp size={15} />,    show: isGest },
+    { id: "pertes",       label: "Pertes",              labelNav: "Pertes",     icon: <AlertTriangle size={15} />, show: isGest },
+    { id: "hygiene",      label: "Hygiène",             labelNav: "Hygiène",    icon: <ShieldCheck size={15} />,   show: isGest },
+    { id: "utilisateurs", label: "Utilisateurs",        labelNav: "Équipe",     icon: <Users size={15} />,         show: isAdmin },
   ].filter(o => o.show);
 
   // S'assurer que l'onglet actif est accessible
   if (!ONGLETS.find(o => o.id === onglet)) setOnglet(ONGLETS[0].id);
+
+  // Détection automatique d'overflow de la barre de navigation
+  useEffect(() => {
+    const nav = navRef.current;
+    const measure = measureRef.current;
+    if (!nav || !measure) return;
+    const check = () => setNavCompact(measure.scrollWidth > nav.clientWidth - 16);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(nav);
+    return () => ro.disconnect();
+  }, [ONGLETS.length]);
 
   const d = dk(darkMode);
 
@@ -6488,20 +6503,50 @@ export default function App() {
       )}
 
       {/* NAVIGATION TABLETTE + BUREAU — cachée sur mobile */}
-      <nav className={`hidden md:block border-b shadow-sm ${darkMode ? "bg-gray-900 border-gray-700" : "bg-white border-gray-200"}`}>
-        <div className="max-w-7xl mx-auto px-2 flex gap-0.5 overflow-x-auto scrollbar-hide">
+      <nav ref={navRef} className={`hidden md:block border-b shadow-sm ${darkMode ? "bg-gray-900 border-gray-700" : "bg-white border-gray-200"}`}>
+        {/* Div invisible hors-écran pour mesurer la largeur naturelle des onglets */}
+        <div ref={measureRef} className="flex gap-0" style={{position:"fixed",top:"-9999px",left:"-9999px",visibility:"hidden",pointerEvents:"none",whiteSpace:"nowrap"}}>
           {ONGLETS.map(o => (
-            <button key={o.id} onClick={() => setOnglet(o.id)}
-              className={`flex items-center gap-1.5 px-3 lg:px-4 py-3 text-xs lg:text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${
-                onglet === o.id
-                  ? `${sc.border} ${sc.text}`
-                  : `border-transparent ${darkMode ? "text-gray-400 hover:text-gray-200 hover:border-gray-500" : "text-gray-500 hover:text-gray-700 hover:border-gray-300"}`
-              }`}>
-              {o.icon}
-              <span className="hidden lg:inline">{o.label}</span>
-              <span className="lg:hidden">{o.labelCourt}</span>
-            </button>
+            <div key={o.id} className="flex items-center gap-1 px-2.5 py-2.5 text-[11px] font-medium whitespace-nowrap shrink-0">
+              <span style={{width:15,height:15,display:"inline-block"}} />
+              <span>{o.labelNav}</span>
+            </div>
           ))}
+        </div>
+
+        <div className="max-w-7xl mx-auto px-2">
+          {navCompact ? (
+            /* Mode compact : indicateur onglet actif + bouton hamburger */
+            <div className="flex items-center justify-between py-1.5 gap-4">
+              <div className={`flex items-center gap-2 text-sm font-semibold ${sc.text}`}>
+                {ONGLETS.find(o => o.id === onglet)?.icon}
+                <span>{ONGLETS.find(o => o.id === onglet)?.label}</span>
+              </div>
+              <button
+                onClick={() => setMenuOuvert(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors shrink-0 ${
+                  darkMode ? "bg-gray-700 text-gray-300 hover:bg-gray-600" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                }`}
+              >
+                <Menu size={15} /> Navigation
+              </button>
+            </div>
+          ) : (
+            /* Mode normal : tous les onglets visibles */
+            <div className="flex gap-0">
+              {ONGLETS.map(o => (
+                <button key={o.id} onClick={() => setOnglet(o.id)}
+                  className={`flex items-center gap-1 px-2.5 py-2.5 text-[11px] font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${
+                    onglet === o.id
+                      ? `${sc.border} ${sc.text}`
+                      : `border-transparent ${darkMode ? "text-gray-400 hover:text-gray-200 hover:border-gray-500" : "text-gray-500 hover:text-gray-700 hover:border-gray-300"}`
+                  }`}>
+                  {o.icon}
+                  <span>{o.labelNav}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </nav>
 
@@ -6510,11 +6555,11 @@ export default function App() {
         <>
           {/* Overlay sombre */}
           <div
-            className="fixed inset-0 bg-black/50 z-40 md:hidden"
+            className="fixed inset-0 bg-black/50 z-40"
             onClick={() => setMenuOuvert(false)}
           />
           {/* Panneau latéral */}
-          <div className={`fixed top-0 right-0 h-full w-72 z-50 flex flex-col shadow-2xl md:hidden ${darkMode ? "bg-gray-900" : "bg-white"}`}
+          <div className={`fixed top-0 right-0 h-full w-72 z-50 flex flex-col shadow-2xl ${darkMode ? "bg-gray-900" : "bg-white"}`}
             style={{animation: "slideInRight 0.22s ease-out"}}>
 
             {/* En-tête sidebar */}
@@ -6553,7 +6598,7 @@ export default function App() {
                         : `${darkMode ? "bg-orange-900/30 text-orange-400 border-r-4 border-orange-500" : "bg-orange-50 text-orange-700 border-r-4 border-orange-500"}`
                       : darkMode ? "text-gray-300 hover:bg-gray-800" : "text-gray-700 hover:bg-gray-50"
                   }`}>
-                  <span className="shrink-0">{o.iconLg}</span>
+                  <span className="shrink-0">{o.icon}</span>
                   {o.label}
                 </button>
               ))}
