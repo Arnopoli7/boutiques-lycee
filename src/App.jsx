@@ -444,16 +444,23 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
     const remisesActives = art._shop === "peda" ? remisesActivePeda : remisesActiveLocale;
     const applicable = remisesActives.filter(r =>
       (r.cible === "article" && parseInt(r.articleId) === art.id) ||
-      (r.cible === "categorie" && r.categorie === art.categorie)
+      (r.cible === "categorie" && r.categorie === art.categorie) ||
+      (r.cible === "multi-articles" && r.type === "2plus1" && parseInt(r.articleIdC) === art.id)
     );
     let meilleur = null;
     let meilleurEco = 0;
     applicable.forEach(r => {
       let eco;
       if (r.type === "2plus1") {
-        const qte = art.qte || 1;
-        if (qte < 3) { eco = 0; }
-        else { const gratuits = Math.floor(qte / 3); eco = r2(art.prix * gratuits / qte); }
+        if (r.cible === "multi-articles") {
+          const hasA = panier.some(i => i.id === parseInt(r.articleIdA) && i._shop === art._shop);
+          const hasB = panier.some(i => i.id === parseInt(r.articleIdB) && i._shop === art._shop);
+          eco = (hasA && hasB) ? art.prix : 0;
+        } else {
+          const qte = art.qte || 1;
+          if (qte < 3) { eco = 0; }
+          else { const gratuits = Math.floor(qte / 3); eco = r2(art.prix * gratuits / qte); }
+        }
       } else {
         eco = r.type === "pourcentage" ? r2(art.prix * r.valeur / 100) : Math.min(r.valeur, art.prix);
       }
@@ -467,10 +474,21 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
         return { prix: Math.max(0, prixOp), fromOperation: true, operationNom: operationActive?.nom, economie: ecoOp };
       }
     }
+    // Vérifier la remise 2+1 multi-articles de l'opération active (peda uniquement)
+    if (art._shop === "peda" && operationActive?.remise2plus1) {
+      const { articleIdA, articleIdB, articleIdC } = operationActive.remise2plus1;
+      if (art.id === parseInt(articleIdC)) {
+        const hasA = panier.some(i => i.id === parseInt(articleIdA) && i._shop === "peda");
+        const hasB = panier.some(i => i.id === parseInt(articleIdB) && i._shop === "peda");
+        if (hasA && hasB && art.prix > meilleurEco) {
+          return { prix: 0, fromOperation: true, operationNom: operationActive.nom, economie: art.prix };
+        }
+      }
+    }
     if (!meilleur || meilleurEco === 0) return null;
     const nvPrix = r2(art.prix - meilleurEco);
     return { prix: Math.max(0, nvPrix), remise: meilleur, economie: meilleurEco };
-  }, [remisesActivePeda, remisesActiveLocale, promoArticlesMap, operationActive]);
+  }, [remisesActivePeda, remisesActiveLocale, promoArticlesMap, operationActive, panier]);
 
   const remisePanierPeda = useMemo(() => remisesActivePeda.find(r => r.cible === "panier") || null, [remisesActivePeda]);
   const remisePanierLocale = useMemo(() => remisesActiveLocale.find(r => r.cible === "panier") || null, [remisesActiveLocale]);
@@ -547,6 +565,28 @@ const ModuleCaisse = ({ articlesPeda, articlesLocale, remisesPeda = [], remisesL
   };
 
   const supprimerDuPanier = (id, shop) => setPanier(prev => prev.filter(i => !(i.id === id && i._shop === shop)));
+
+  // Auto-ajout article C quand A+B sont au panier (opération 2+1 multi-articles)
+  useEffect(() => {
+    if (!operationActive?.remise2plus1) return;
+    const { articleIdA, articleIdB, articleIdC } = operationActive.remise2plus1;
+    const idA = parseInt(articleIdA);
+    const idB = parseInt(articleIdB);
+    const idC = parseInt(articleIdC);
+    if (!idA || !idB || !idC) return;
+    const hasA = panier.some(i => i.id === idA && i._shop === "peda");
+    const hasB = panier.some(i => i.id === idB && i._shop === "peda");
+    const hasC = panier.some(i => i.id === idC && i._shop === "peda");
+    if (hasA && hasB && !hasC) {
+      const artC = articlesPeda.find(a => a.id === idC);
+      if (artC && artC.actif) {
+        setPanier(prev => {
+          if (prev.some(i => i.id === idC && i._shop === "peda")) return prev;
+          return [...prev, { ...artC, _shop: "peda", qte: 1 }];
+        });
+      }
+    }
+  }, [panier, operationActive, articlesPeda]);
 
   const validerVente = () => {
     if (panier.length === 0) return;
@@ -3821,9 +3861,15 @@ const ModuleOperations = ({ articles, operations, setOperations }) => {
     if (!form.dateDebut) { setAlerte({ type: "error", msg: "La date de début est obligatoire." }); return; }
     if (!form.dateFin) { setAlerte({ type: "error", msg: "La date de fin est obligatoire." }); return; }
     if (form.dateFin < form.dateDebut) { setAlerte({ type: "error", msg: "La date de fin doit être après la date de début." }); return; }
-    if (formArticles.length === 0) { setAlerte({ type: "error", msg: "Ajoutez au moins un article." }); return; }
+    if (formArticles.length === 0 && !form.remise2plus1) { setAlerte({ type: "error", msg: "Ajoutez au moins un article ou une remise 2+1." }); return; }
     for (const a of formArticles) {
       if (isNaN(a.prixPromo) || a.prixPromo < 0) { setAlerte({ type: "error", msg: "Les prix promotionnels doivent être positifs." }); return; }
+    }
+    if (form.remise2plus1) {
+      const { articleIdA, articleIdB, articleIdC } = form.remise2plus1;
+      if (!articleIdA || !articleIdB || !articleIdC) {
+        setAlerte({ type: "error", msg: "Sélectionnez les 3 articles pour la remise 2+1." }); return;
+      }
     }
     const op = { ...form, articles: formArticles };
     if (form.id) {
@@ -3879,7 +3925,9 @@ const ModuleOperations = ({ articles, operations, setOperations }) => {
                       Du {fmtD(op.dateDebut)} au {fmtD(op.dateFin)}
                     </div>
                     <div className={`text-xs ${d.textMuted} mt-1`}>
-                      {artCount} article{artCount > 1 ? "s" : ""} en promotion
+                      {artCount > 0 && <>{artCount} article{artCount > 1 ? "s" : ""} en promotion</>}
+                      {artCount > 0 && op.remise2plus1 && <span className="mx-1">·</span>}
+                      {op.remise2plus1 && <span className="text-orange-500 font-medium">Remise 2+1 multi-articles</span>}
                       {getStatut(op) === "active" && (
                         <span className="ml-2 text-green-500 font-medium">● Prix PROMO actifs en caisse</span>
                       )}
@@ -3895,6 +3943,16 @@ const ModuleOperations = ({ articles, operations, setOperations }) => {
                             </span>
                           );
                         })}
+                        {op.remise2plus1 && (() => {
+                          const artA = articles.find(a => a.id === parseInt(op.remise2plus1.articleIdA));
+                          const artB = articles.find(a => a.id === parseInt(op.remise2plus1.articleIdB));
+                          const artC = articles.find(a => a.id === parseInt(op.remise2plus1.articleIdC));
+                          return (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 font-medium">
+                              🎁 {artA?.nom || "?"} + {artB?.nom || "?"} → {artC?.nom || "?"} offert
+                            </span>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>
@@ -3972,6 +4030,40 @@ const ModuleOperations = ({ articles, operations, setOperations }) => {
               </div>
             )}
 
+            {/* Remise 2+1 multi-articles optionnelle */}
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <input type="checkbox" id="enable2plus1op"
+                  checked={!!form.remise2plus1}
+                  onChange={e => setForm(p => ({ ...p, remise2plus1: e.target.checked ? { articleIdA: "", articleIdB: "", articleIdC: "" } : null }))}
+                  className="w-4 h-4 accent-orange-500" />
+                <label htmlFor="enable2plus1op" className={`text-sm font-medium ${dark ? "text-gray-300" : "text-gray-700"}`}>
+                  Ajouter une remise 2 achetés + 1 offert (3 articles différents)
+                </label>
+              </div>
+              {form.remise2plus1 && (
+                <div className={`p-3 rounded-xl border space-y-2 ${dark ? "bg-gray-800/60 border-gray-600" : "bg-orange-50 border-orange-200"}`}>
+                  <p className="text-xs font-semibold text-orange-600 mb-1">A + B achetés → C offert automatiquement en caisse</p>
+                  <select value={form.remise2plus1.articleIdA || ""} onChange={e => setForm(p => ({ ...p, remise2plus1: { ...p.remise2plus1, articleIdA: e.target.value } }))}
+                    className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 ${dark ? "bg-gray-700 border-gray-600 text-white" : "bg-white border-gray-300 text-gray-900"}`}>
+                    <option value="">— Article A (acheté) —</option>
+                    {articlesActifs.map(a => <option key={a.id} value={a.id}>{a.nom} — {fmt(a.prix)}</option>)}
+                  </select>
+                  <select value={form.remise2plus1.articleIdB || ""} onChange={e => setForm(p => ({ ...p, remise2plus1: { ...p.remise2plus1, articleIdB: e.target.value } }))}
+                    className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 ${dark ? "bg-gray-700 border-gray-600 text-white" : "bg-white border-gray-300 text-gray-900"}`}>
+                    <option value="">— Article B (acheté) —</option>
+                    {articlesActifs.map(a => <option key={a.id} value={a.id}>{a.nom} — {fmt(a.prix)}</option>)}
+                  </select>
+                  <div className="text-center text-xs font-bold text-orange-500">↓ OFFERT GRATUITEMENT</div>
+                  <select value={form.remise2plus1.articleIdC || ""} onChange={e => setForm(p => ({ ...p, remise2plus1: { ...p.remise2plus1, articleIdC: e.target.value } }))}
+                    className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 ${dark ? "bg-gray-700 border-gray-600 text-white" : "bg-white border-gray-300 text-gray-900"}`}>
+                    <option value="">— Article C (offert) —</option>
+                    {articlesActifs.map(a => <option key={a.id} value={a.id}>{a.nom} — {fmt(a.prix)}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+
             <div className="flex gap-2 pt-2">
               <Btn variant="primary" shop="peda" onClick={sauvegarder}>
                 <Save size={15} /> {form.id ? "Enregistrer" : "Créer l'opération"}
@@ -4007,6 +4099,7 @@ const ModuleRemises = ({ articles, remises, setRemises, shop }) => {
     setForm({
       nom: "", type: "pourcentage", valeur: "", cible: "article",
       articleId: "", categorie: cats[0], dateDebut: today, dateFin: "", actif: true,
+      articleIdA: "", articleIdB: "", articleIdC: "",
     });
     setModal("form");
   };
@@ -4022,6 +4115,9 @@ const ModuleRemises = ({ articles, remises, setRemises, shop }) => {
       if (form.type === "pourcentage" && val > 100) { setAlerte({ type: "error", msg: "Un pourcentage ne peut pas dépasser 100%." }); return; }
     }
     if (form.cible === "article" && !form.articleId) { setAlerte({ type: "error", msg: "Veuillez sélectionner un article." }); return; }
+    if (form.cible === "multi-articles" && (!form.articleIdA || !form.articleIdB || !form.articleIdC)) {
+      setAlerte({ type: "error", msg: "Veuillez sélectionner les 3 articles (A, B et C)." }); return;
+    }
     if (form.id) {
       setRemises(prev => prev.map(r => r.id === form.id ? { ...form, valeur: val } : r));
       setAlerte({ type: "success", msg: "Remise modifiée." });
@@ -4035,6 +4131,12 @@ const ModuleRemises = ({ articles, remises, setRemises, shop }) => {
   const labelCible = (r) => {
     if (r.cible === "panier") return "Sur le panier entier";
     if (r.cible === "categorie") return `Catégorie : ${r.categorie}`;
+    if (r.cible === "multi-articles") {
+      const artA = articles.find(a => a.id === parseInt(r.articleIdA));
+      const artB = articles.find(a => a.id === parseInt(r.articleIdB));
+      const artC = articles.find(a => a.id === parseInt(r.articleIdC));
+      return `${artA?.nom || "?"} + ${artB?.nom || "?"} → ${artC?.nom || "?"} offert`;
+    }
     const art = articles.find(a => a.id === parseInt(r.articleId));
     return art ? `Article : ${art.nom}` : "Article inconnu";
   };
@@ -4312,7 +4414,14 @@ Photographie et visuel non contractuels. Conformément à la réglementation en 
           <div className="space-y-3">
             <Input label="Nom de la remise *" value={form.nom} onChange={e => setForm(p => ({ ...p, nom: e.target.value }))} placeholder="ex: Promo vendredi, -10% yaourts..." />
             <div className="grid grid-cols-2 gap-3">
-              <Select label="Type" value={form.type} onChange={e => setForm(p => ({ ...p, type: e.target.value, valeur: e.target.value === "2plus1" ? "0" : p.valeur }))}>
+              <Select label="Type" value={form.type} onChange={e => setForm(p => ({
+                ...p,
+                type: e.target.value,
+                valeur: e.target.value === "2plus1" ? "0" : p.valeur,
+                cible: e.target.value !== "2plus1" && p.cible === "multi-articles" ? "article"
+                     : e.target.value === "2plus1" && p.cible === "panier" ? "article"
+                     : p.cible,
+              }))}>
                 <option value="pourcentage">Pourcentage (%)</option>
                 <option value="fixe">Montant fixe (€)</option>
                 <option value="2plus1">2 achetés + 1 offert</option>
@@ -4327,11 +4436,38 @@ Photographie et visuel non contractuels. Conformément à la réglementation en 
                 </div>
               )}
             </div>
-            <Select label="Appliquer sur" value={form.cible} onChange={e => setForm(p => ({ ...p, cible: e.target.value }))}>
-              <option value="panier">Le panier entier</option>
-              <option value="categorie">Une catégorie d'articles</option>
-              <option value="article">Un article spécifique</option>
-            </Select>
+            {/* Mode 2+1 : même article vs 3 articles différents */}
+            {form.type === "2plus1" && (
+              <div>
+                <label className={`block text-xs font-medium mb-1.5 ${d.label}`}>Mode</label>
+                <div className="flex gap-2">
+                  <button type="button"
+                    onClick={() => setForm(p => ({ ...p, cible: "article", articleIdA: "", articleIdB: "", articleIdC: "" }))}
+                    className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium border transition-all ${form.cible !== "multi-articles" ? `border-orange-500 bg-orange-500/10 ${color === "teal" ? "text-teal-600" : "text-orange-600"}` : `${d.input} ${d.textMuted}`}`}>
+                    Même article (×3)
+                  </button>
+                  <button type="button"
+                    onClick={() => setForm(p => ({ ...p, cible: "multi-articles", articleId: "" }))}
+                    className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium border transition-all ${form.cible === "multi-articles" ? `border-orange-500 bg-orange-500/10 ${color === "teal" ? "text-teal-600" : "text-orange-600"}` : `${d.input} ${d.textMuted}`}`}>
+                    3 articles différents
+                  </button>
+                </div>
+              </div>
+            )}
+            {/* Cible normale (hors mode multi-articles 2+1) */}
+            {form.type !== "2plus1" && (
+              <Select label="Appliquer sur" value={form.cible} onChange={e => setForm(p => ({ ...p, cible: e.target.value }))}>
+                <option value="panier">Le panier entier</option>
+                <option value="categorie">Une catégorie d'articles</option>
+                <option value="article">Un article spécifique</option>
+              </Select>
+            )}
+            {form.type === "2plus1" && form.cible !== "multi-articles" && (
+              <Select label="Appliquer sur" value={form.cible} onChange={e => setForm(p => ({ ...p, cible: e.target.value }))}>
+                <option value="categorie">Une catégorie d'articles</option>
+                <option value="article">Un article spécifique</option>
+              </Select>
+            )}
             {form.cible === "categorie" && (
               <Select label="Catégorie" value={form.categorie} onChange={e => setForm(p => ({ ...p, categorie: e.target.value }))}>
                 {cats.map(c => <option key={c}>{c}</option>)}
@@ -4342,6 +4478,25 @@ Photographie et visuel non contractuels. Conformément à la réglementation en 
                 <option value="">-- Choisir un article --</option>
                 {articles.filter(a => a.actif).map(a => <option key={a.id} value={a.id}>{a.nom}</option>)}
               </Select>
+            )}
+            {/* Sélection des 3 articles pour mode multi-articles */}
+            {form.type === "2plus1" && form.cible === "multi-articles" && (
+              <div className={`p-3 rounded-xl border space-y-2 ${dark ? "bg-gray-800/60 border-gray-600" : "bg-orange-50 border-orange-200"}`}>
+                <p className={`text-xs font-semibold mb-2 ${color === "teal" ? "text-teal-600" : "text-orange-600"}`}>A + B achetés → C offert</p>
+                <Select label="Article A (acheté)" value={form.articleIdA || ""} onChange={e => setForm(p => ({ ...p, articleIdA: e.target.value }))}>
+                  <option value="">-- Choisir l'article A --</option>
+                  {articles.filter(a => a.actif).map(a => <option key={a.id} value={a.id}>{a.nom}</option>)}
+                </Select>
+                <Select label="Article B (acheté)" value={form.articleIdB || ""} onChange={e => setForm(p => ({ ...p, articleIdB: e.target.value }))}>
+                  <option value="">-- Choisir l'article B --</option>
+                  {articles.filter(a => a.actif).map(a => <option key={a.id} value={a.id}>{a.nom}</option>)}
+                </Select>
+                <div className={`text-center text-xs font-bold py-0.5 ${color === "teal" ? "text-teal-500" : "text-orange-500"}`}>↓ OFFERT GRATUITEMENT</div>
+                <Select label="Article C (offert)" value={form.articleIdC || ""} onChange={e => setForm(p => ({ ...p, articleIdC: e.target.value }))}>
+                  <option value="">-- Choisir l'article C --</option>
+                  {articles.filter(a => a.actif).map(a => <option key={a.id} value={a.id}>{a.nom}</option>)}
+                </Select>
+              </div>
             )}
             <div className="grid grid-cols-2 gap-3">
               <Input label="Date de début" type="date" value={form.dateDebut} onChange={e => setForm(p => ({ ...p, dateDebut: e.target.value }))} />
