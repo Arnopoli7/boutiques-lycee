@@ -6360,6 +6360,19 @@ export default function App() {
     setAlertesIgnorees(prev => prev.includes(alerteId) ? prev : [...prev, alerteId]);
   };
 
+  // Détection automatique d'overflow de la barre de navigation
+  // (doit être AVANT le return conditionnel pour respecter les règles des hooks)
+  useEffect(() => {
+    const nav = navRef.current;
+    const measure = measureRef.current;
+    if (!nav || !measure) return;
+    const check = () => setNavCompact(measure.scrollWidth > nav.clientWidth - 16);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(nav);
+    return () => ro.disconnect();
+  }, [currentUser]);
+
   if (!currentUser) return (
     <DarkCtx.Provider value={darkMode}>
       <LoginScreen onLogin={handleLogin} />
@@ -6397,18 +6410,6 @@ export default function App() {
 
   // S'assurer que l'onglet actif est accessible
   if (!ONGLETS.find(o => o.id === onglet)) setOnglet(ONGLETS[0].id);
-
-  // Détection automatique d'overflow de la barre de navigation
-  useEffect(() => {
-    const nav = navRef.current;
-    const measure = measureRef.current;
-    if (!nav || !measure) return;
-    const check = () => setNavCompact(measure.scrollWidth > nav.clientWidth - 16);
-    check();
-    const ro = new ResizeObserver(check);
-    ro.observe(nav);
-    return () => ro.disconnect();
-  }, [ONGLETS.length]);
 
   const d = dk(darkMode);
 
