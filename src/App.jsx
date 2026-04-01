@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, createContext, useContext, useEffect, u
 import {
   ShoppingCart, Package, BarChart2, Users, LogOut, Eye, EyeOff,
   Plus, Minus, Trash2, CheckCircle, AlertTriangle, XCircle,
-  Search, ChevronDown, Edit2, Save, X, Truck, RefreshCw,
+  Search, ChevronDown, ChevronLeft, ChevronRight, Edit2, Save, X, Truck, RefreshCw,
   CreditCard, Banknote, ShoppingBag, BookOpen, Tag, Clock,
   ArrowLeft, ToggleLeft, ToggleRight, Filter, Download, ClipboardList,
   Moon, Sun, Home, TrendingUp, AlertCircle, Percent, Ticket,
@@ -1838,33 +1838,56 @@ const ModuleLivraisons = ({ articles, setArticles, livraisons, setLivraisons, sh
 // ─── MODULE ANALYSES ─────────────────────────────────────────────────────────
 
 const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId, onReset, pertes = [], remises = [], isComptable = false, operations = [] }) => {
-  const [periode, setPeriode] = useState("today");
+  const [periode, setPeriode] = useState("month");
   const [userFiltre, setUserFiltre] = useState("all");
   const [confirmReset, setConfirmReset] = useState(false);
   const [bilanPeriode, setBilanPeriode] = useState("mois");
   const color = shop === "locale" ? "teal" : "orange";
 
-  const now_ = new Date();
+  const nowReal = new Date();
+  const currentMonthKey = `${nowReal.getFullYear()}-${String(nowReal.getMonth()+1).padStart(2,'0')}`;
+
+  const [moisSelectionne, setMoisSelectionne] = useState(currentMonthKey);
+
+  // Date de référence : dernier instant du mois sélectionné (ou maintenant si mois courant)
+  const moisRef = useMemo(() => {
+    if (moisSelectionne === currentMonthKey) return nowReal;
+    const [y, m] = moisSelectionne.split('-').map(Number);
+    return new Date(y, m, 0, 23, 59, 59);
+  }, [moisSelectionne]);
+
+  // Ventes limitées au mois sélectionné
+  const ventesBase = useMemo(() => {
+    const [y, m] = moisSelectionne.split('-').map(Number);
+    const debut = new Date(y, m-1, 1);
+    const fin   = new Date(y, m, 1);
+    return ventes.filter(v => { const d = new Date(v.date); return d >= debut && d < fin; });
+  }, [ventes, moisSelectionne]);
+
+  // Basculer automatiquement sur "mois" quand on navigue vers un mois passé
+  useEffect(() => {
+    if (moisSelectionne !== currentMonthKey) setPeriode("month");
+  }, [moisSelectionne]);
 
   const periodeDebut = useMemo(() => {
-    const n = new Date();
+    const n = moisRef;
     if (periode === "today") return new Date(n.getFullYear(), n.getMonth(), n.getDate());
     if (periode === "week")  return new Date(n.getFullYear(), n.getMonth(), n.getDate() - 6);
     if (periode === "month") return new Date(n.getFullYear(), n.getMonth(), 1);
     if (periode === "year")  return new Date(n.getFullYear(), 0, 1);
     return null; // "all"
-  }, [periode]);
+  }, [periode, moisRef]);
 
   const periodeLabel = { today: "Aujourd'hui", week: "7 derniers jours", month: "Ce mois", year: "Cette année", all: "Tout" }[periode];
 
   const ventesFiltered = useMemo(() => {
-    return ventes.filter(v => {
+    return ventesBase.filter(v => {
       const d = new Date(v.date);
       if (periodeDebut && d < periodeDebut) return false;
       if (isAdmin && userFiltre !== "all" && v.userId !== parseInt(userFiltre)) return false;
       return true;
     });
-  }, [ventes, periodeDebut, userFiltre, isAdmin]);
+  }, [ventesBase, periodeDebut, userFiltre, isAdmin]);
 
   const caTotal = useMemo(() => r2(ventesFiltered.reduce((s, v) => s + v.total, 0)), [ventesFiltered]);
   const caEspeces = useMemo(() => r2(ventesFiltered.filter(v => v.paiement === "especes").reduce((s, v) => s + v.total, 0)), [ventesFiltered]);
@@ -1894,14 +1917,14 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
   const nbVentes = ventesFiltered.length;
   const panierMoyen = nbVentes > 0 ? r2(caTotal / nbVentes) : 0;
   const nbPassagesJour = useMemo(() =>
-    ventes.filter(v => new Date(v.date).toDateString() === new Date().toDateString()).length
-  , [ventes]);
+    ventesBase.filter(v => new Date(v.date).toDateString() === moisRef.toDateString()).length
+  , [ventesBase, moisRef]);
 
   // Ventes par jour (graphique)
   const ventesParJour = useMemo(() => {
     const map = {};
     const nbJours = periode === "today" ? 1 : periode === "week" ? 7 : periode === "month" ? 31 : periode === "year" ? 12 : 30;
-    const now = new Date();
+    const now = moisRef;
     if (periode === "year") {
       for (let m = 0; m < 12; m++) {
         const key = `${now.getFullYear()}-${String(m+1).padStart(2,"0")}`;
@@ -1925,7 +1948,7 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
       });
     }
     return Object.values(map);
-  }, [ventesFiltered, periode]);
+  }, [ventesFiltered, periode, moisRef]);
 
   // Répartition par catégorie
   const ventesParCategorie = useMemo(() => {
@@ -1941,11 +1964,11 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
 
   // Comparaison période courante vs période précédente
   const { periodeActuelle, periodePrecedente, labelPrecedent } = useMemo(() => {
-    const now = new Date();
+    const now = moisRef;
     let debutActuel, debutPrecedent, finPrecedent, lbl;
     if (periode === "today") {
       debutActuel   = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      debutPrecedent = new Date(debutActuel - 86400000); finPrecedent = debutActuel; lbl = "Hier";
+      debutPrecedent = new Date(debutActuel - 86400000); finPrecedent = debutActuel; lbl = "Jour précédent";
     } else if (periode === "week") {
       debutActuel   = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
       debutPrecedent = new Date(debutActuel.getTime() - 7*86400000); finPrecedent = debutActuel; lbl = "7 j. précédents";
@@ -1958,7 +1981,7 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
     } else {
       return { periodeActuelle: { ca: caTotal, nb: nbVentes }, periodePrecedente: { ca: 0, nb: 0 }, labelPrecedent: "" };
     }
-    const filtreActuel   = ventes.filter(v => new Date(v.date) >= debutActuel);
+    const filtreActuel   = ventes.filter(v => { const d = new Date(v.date); return d >= debutActuel && d <= now; });
     const filtrePrecedent = ventes.filter(v => { const d = new Date(v.date); return d >= debutPrecedent && d < finPrecedent; });
     const caA = r2(filtreActuel.reduce((s, v) => s + v.total, 0));
     const caP = r2(filtrePrecedent.reduce((s, v) => s + v.total, 0));
@@ -1967,26 +1990,28 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
       periodePrecedente: { ca: caP, nb: filtrePrecedent.length },
       labelPrecedent: lbl
     };
-  }, [ventes, periode, caTotal, nbVentes]);
+  }, [ventes, periode, caTotal, nbVentes, moisRef]);
 
   // Top 5 produits
   const top5Produits = useMemo(() => [...ventesParProduit].sort((a, b) => b.qte - a.qte).slice(0, 5), [ventesParProduit]);
 
-  // Courbe CA 30 derniers jours (indépendante du filtre période)
+  // Courbe CA jour par jour (mois sélectionné)
   const ca30Jours = useMemo(() => {
     const map = {};
-    const now = new Date();
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const ref = moisRef;
+    const [y, m] = moisSelectionne.split('-').map(Number);
+    const nbJoursMois = new Date(y, m, 0).getDate();
+    for (let i = 0; i < nbJoursMois; i++) {
+      const d = new Date(y, m-1, i+1);
       const key = d.toISOString().slice(0, 10);
-      map[key] = { date: `${d.getDate()}/${d.getMonth() + 1}`, ca: 0 };
+      map[key] = { date: `${d.getDate()}/${m}`, ca: 0 };
     }
-    ventes.forEach(v => {
+    ventesBase.forEach(v => {
       const key = new Date(v.date).toISOString().slice(0, 10);
       if (map[key]) map[key].ca = r2(map[key].ca + v.total);
     });
     return Object.values(map);
-  }, [ventes]);
+  }, [ventesBase, moisSelectionne, moisRef]);
 
   // Export Excel (XLSX réel via SheetJS)
   const exportExcel = useCallback(() => {
@@ -2026,13 +2051,14 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
 
   // ── Bilan mensuel PDF ────────────────────────────────────────────────────────
   const genererBilanPdf = useCallback(() => {
-    const now = new Date();
+    const now = moisRef;
     const moisLabel = now.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
     const nomBoutique = shop === "peda" ? "Boutique Pédagogique" : "Boutique Locale";
 
-    // Mois courant
+    // Mois sélectionné
     const debutMois = new Date(now.getFullYear(), now.getMonth(), 1);
-    const ventesMois = ventes.filter(v => new Date(v.date) >= debutMois);
+    const finMois = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const ventesMois = ventes.filter(v => { const d = new Date(v.date); return d >= debutMois && d < finMois; });
     const caMois = r2(ventesMois.reduce((s, v) => s + v.total, 0));
     const nbVentesMois = ventesMois.length;
     const panierMoyenMois = nbVentesMois > 0 ? r2(caMois / nbVentesMois) : 0;
@@ -2200,11 +2226,11 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
 </body></html>`;
     const win = window.open("", "_blank");
     if (win) { win.document.write(html); win.document.close(); }
-  }, [ventes, pertes, remises, shop]);
+  }, [ventes, pertes, remises, shop, moisRef]);
 
   // ── Bilan financier : encaissements par mode de paiement ────────────────────
   const bilanFinancier = useMemo(() => {
-    const maintenant = new Date();
+    const maintenant = moisRef;
 
     // Par jour — 30 derniers jours
     const parJour = [];
@@ -2247,7 +2273,7 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
     }
 
     return { parJour, parSemaine, parMois };
-  }, [ventes]);
+  }, [ventes, moisRef]);
 
   const bilanLignes = bilanPeriode === "jour" ? bilanFinancier.parJour
     : bilanPeriode === "semaine" ? bilanFinancier.parSemaine
@@ -2370,12 +2396,49 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
   const dark = useDark();
   const d = dk(dark);
 
+  const isCurrentMonth = moisSelectionne === currentMonthKey;
+
+  const naviguerMois = (delta) => {
+    const [y, m] = moisSelectionne.split('-').map(Number);
+    const d2 = new Date(y, m - 1 + delta, 1);
+    const key = `${d2.getFullYear()}-${String(d2.getMonth()+1).padStart(2,'0')}`;
+    if (key <= currentMonthKey) setMoisSelectionne(key);
+  };
+
   return (
     <div className="space-y-5">
+      {/* Sélecteur mois/année */}
+      <div className={`${d.card} border rounded-xl px-4 py-3 flex items-center justify-between flex-wrap gap-3`}>
+        <div className="flex items-center gap-2">
+          <button onClick={() => naviguerMois(-1)}
+            className={`p-1.5 rounded-lg ${d.btnSecondary} hover:opacity-80`}>
+            <ChevronLeft size={16} />
+          </button>
+          <input
+            type="month"
+            value={moisSelectionne}
+            max={currentMonthKey}
+            onChange={e => { if (e.target.value <= currentMonthKey) setMoisSelectionne(e.target.value); }}
+            className={`px-3 py-1.5 rounded-lg text-sm font-semibold border ${d.input} focus:outline-none`}
+          />
+          <button onClick={() => naviguerMois(1)} disabled={isCurrentMonth}
+            className={`p-1.5 rounded-lg ${d.btnSecondary} disabled:opacity-30`}>
+            <ChevronRight size={16} />
+          </button>
+        </div>
+        <div className={`text-sm font-medium ${d.text}`}>
+          {moisRef.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}
+          {isCurrentMonth && <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${color === "teal" ? "bg-teal-500/20 text-teal-500" : "bg-orange-500/20 text-orange-500"}`}>Mois en cours</span>}
+        </div>
+      </div>
+
       {/* Filtres */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex gap-1 flex-wrap">
-          {[["today", "Jour"], ["week", "Semaine"], ["month", "Mois"], ["year", "Année"], ["all", "Tout"]].map(([v, l]) => (
+          {(isCurrentMonth
+            ? [["today", "Jour"], ["week", "Semaine"], ["month", "Mois"], ["year", "Année"], ["all", "Tout"]]
+            : [["month", "Mois entier"], ["week", "Dernière semaine"], ["all", "Tout"]]
+          ).map(([v, l]) => (
             <button key={v} onClick={() => setPeriode(v)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium ${periode === v ? (color === "teal" ? "bg-teal-600 text-white" : "bg-orange-500 text-white") : d.btnSecondary}`}>
               {l}
@@ -2403,7 +2466,7 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
           { label: "Carte bleue", val: fmt(caCarte), icon: <CreditCard size={20} />, sub: null },
           { label: "Marge brute", val: fmt(margeTotal), icon: <TrendingUp size={20} />, sub: `${margeTotalPct}%`, subColor: margeTotalPct >= 30 ? "text-green-500" : "text-orange-400" },
           { label: "Panier moyen", val: fmt(panierMoyen), icon: <ShoppingCart size={20} />, sub: `${nbVentes} vente${nbVentes > 1 ? "s" : ""}`, subColor: d.textMuted },
-          { label: "Passages caisse", val: nbPassagesJour, icon: <ShoppingBag size={20} />, sub: "Aujourd'hui", subColor: "text-blue-500" },
+          { label: "Passages caisse", val: nbPassagesJour, icon: <ShoppingBag size={20} />, sub: moisSelectionne === currentMonthKey ? "Aujourd'hui" : moisRef.toLocaleDateString("fr-FR", { day: "numeric", month: "short" }), subColor: "text-blue-500" },
         ].map(kpi => (
           <div key={kpi.label} className={`${d.card} border rounded-xl p-4 flex items-center gap-3`}>
             <div className={`p-2.5 rounded-lg flex-shrink-0 ${color === "teal" ? "bg-teal-500/20 text-teal-400" : "bg-orange-500/20 text-orange-400"}`}>{kpi.icon}</div>
@@ -2564,7 +2627,7 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
       <div className={`${d.card} border rounded-xl p-4`}>
         <div className={`text-sm font-semibold mb-3 flex items-center gap-2 ${d.text}`}>
           <TrendingUp size={16} className={color === "teal" ? "text-teal-500" : "text-orange-500"} />
-          CA jour par jour — 30 derniers jours
+          CA jour par jour — {moisRef.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}
         </div>
         <ResponsiveContainer width="100%" height={180}>
           <LineChart data={ca30Jours} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
