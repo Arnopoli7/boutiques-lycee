@@ -13,7 +13,7 @@ import { db, storage } from "./firebase";
 import { doc, setDoc, deleteDoc, onSnapshot, getDoc } from "firebase/firestore";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import * as XLSX from "xlsx";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend } from "recharts";
 
 // ─── DARK MODE CONTEXT ───────────────────────────────────────────────────────
 const DarkCtx = createContext(false);
@@ -1842,6 +1842,13 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
   const [userFiltre, setUserFiltre] = useState("all");
   const [confirmReset, setConfirmReset] = useState(false);
   const [bilanPeriode, setBilanPeriode] = useState("mois");
+  const [modeComparaison, setModeComparaison] = useState(false);
+  const [compGranularite, setCompGranularite] = useState("jour");
+  const [compP1Debut, setCompP1Debut] = useState("");
+  const [compP1Fin, setCompP1Fin] = useState("");
+  const [compP2Debut, setCompP2Debut] = useState("");
+  const [compP2Fin, setCompP2Fin] = useState("");
+  const [compResultats, setCompResultats] = useState(null);
   const color = shop === "locale" ? "teal" : "orange";
 
   const nowReal = new Date();
@@ -2048,6 +2055,200 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
     const dateStr = new Date().toISOString().slice(0, 10);
     XLSX.writeFile(wb, `bilan_${shop}_${periode}_${dateStr}.xlsx`);
   }, [ventesFiltered, ventesParProduit, users, shop, periode, periodeLabel, caTotal, caEspeces, caCarte, margeTotal, margeTotalPct, nbVentes, panierMoyen]);
+
+  // ── Comparaison personnalisée ─────────────────────────────────────────────
+  const calculerComparaison = useCallback(() => {
+    if (!compP1Debut || !compP1Fin || !compP2Debut || !compP2Fin) return;
+    const msDay = 86400000;
+    const d1S = new Date(compP1Debut + "T00:00:00");
+    const d1E = new Date(compP1Fin + "T23:59:59");
+    const d2S = new Date(compP2Debut + "T00:00:00");
+    const d2E = new Date(compP2Fin + "T23:59:59");
+
+    const calcPeriode = (vPeriode) => {
+      const ca = r2(vPeriode.reduce((s, v) => s + v.total, 0));
+      const nb = vPeriode.length;
+      const especes = r2(vPeriode.filter(v => v.paiement === "especes").reduce((s, v) => s + v.total, 0));
+      const carte = r2(vPeriode.filter(v => v.paiement === "carte").reduce((s, v) => s + v.total, 0));
+      const panier = nb > 0 ? r2(ca / nb) : 0;
+      const prodMap = {};
+      vPeriode.forEach(v => v.items.forEach(item => {
+        if (!prodMap[item.id]) prodMap[item.id] = { nom: item.nom, qte: 0, ca: 0 };
+        prodMap[item.id].qte += item.qte;
+        prodMap[item.id].ca = r2(prodMap[item.id].ca + item.prix * item.qte);
+      }));
+      const top5 = Object.values(prodMap).sort((a, b) => b.qte - a.qte).slice(0, 5);
+      return { ca, nb, especes, carte, panier, top5 };
+    };
+
+    const vP1 = ventes.filter(v => { const dV = new Date(v.date); return dV >= d1S && dV <= d1E; });
+    const vP2 = ventes.filter(v => { const dV = new Date(v.date); return dV >= d2S && dV <= d2E; });
+
+    const genChart = (vPeriode, dateStart, granularite) => {
+      const map = {};
+      if (granularite === "jour") {
+        vPeriode.forEach(v => {
+          const dV = new Date(v.date);
+          const idx = Math.floor((dV - dateStart) / msDay);
+          if (!map[idx]) map[idx] = { idx, label: `J+${idx + 1}`, total: 0 };
+          map[idx].total = r2(map[idx].total + v.total);
+        });
+      } else if (granularite === "semaine") {
+        vPeriode.forEach(v => {
+          const dV = new Date(v.date);
+          const idx = Math.floor((dV - dateStart) / (7 * msDay));
+          if (!map[idx]) map[idx] = { idx, label: `S+${idx + 1}`, total: 0 };
+          map[idx].total = r2(map[idx].total + v.total);
+        });
+      } else {
+        vPeriode.forEach(v => {
+          const dV = new Date(v.date);
+          const idx = (dV.getFullYear() - dateStart.getFullYear()) * 12 + dV.getMonth() - dateStart.getMonth();
+          if (!map[idx]) map[idx] = { idx, label: `M+${idx + 1}`, total: 0 };
+          map[idx].total = r2(map[idx].total + v.total);
+        });
+      }
+      return Object.values(map).sort((a, b) => a.idx - b.idx);
+    };
+
+    const chart1 = genChart(vP1, d1S, compGranularite);
+    const chart2 = genChart(vP2, d2S, compGranularite);
+    const maxLen = Math.max(chart1.length, chart2.length, 1);
+    const chartData = Array.from({ length: maxLen }, (_, i) => ({
+      label: chart1[i]?.label || chart2[i]?.label || `+${i + 1}`,
+      p1: chart1[i]?.total ?? null,
+      p2: chart2[i]?.total ?? null,
+    }));
+
+    setCompResultats({
+      p1: { ...calcPeriode(vP1), debut: compP1Debut, fin: compP1Fin },
+      p2: { ...calcPeriode(vP2), debut: compP2Debut, fin: compP2Fin },
+      chartData,
+    });
+  }, [ventes, compP1Debut, compP1Fin, compP2Debut, compP2Fin, compGranularite]);
+
+  const genererComparaisonPdf = useCallback(() => {
+    if (!compResultats) return;
+    const nomBoutique = shop === "peda" ? "Boutique Pédagogique" : "Boutique Locale";
+    const now = new Date();
+    const { p1, p2 } = compResultats;
+    const fmtD = (s) => { if (!s) return "—"; const [y, m, j] = s.split("-"); return `${j}/${m}/${y}`; };
+    const ecart = (a, b) => b === 0 ? null : Math.round((a - b) / b * 100);
+    const evoCell = (val) => {
+      if (val === null) return `<span style="color:#9ca3af">—</span>`;
+      const c = val > 0 ? "#16a34a" : val === 0 ? "#9ca3af" : "#dc2626";
+      const arrow = val > 0 ? "↑" : val < 0 ? "↓" : "=";
+      return `<span style="color:${c};font-weight:700">${arrow} ${Math.abs(val)}%</span>`;
+    };
+    const evoCa = ecart(p2.ca, p1.ca);
+    const evoNb = ecart(p2.nb, p1.nb);
+    const evoPanier = ecart(p2.panier, p1.panier);
+    const top5Rows = (top5) => top5.length === 0
+      ? `<tr><td colspan="3" style="padding:6px;text-align:center;color:#9ca3af">Aucune vente</td></tr>`
+      : top5.map((a, i) =>
+          `<tr style="background:${i % 2 === 0 ? "#fff" : "#f9fafb"}">
+            <td style="padding:5px 8px;border:1px solid #e5e7eb">${i + 1}. ${a.nom}</td>
+            <td style="padding:5px 8px;border:1px solid #e5e7eb;text-align:center">${a.qte}</td>
+            <td style="padding:5px 8px;border:1px solid #e5e7eb;text-align:right;font-weight:700;color:#C8001A">${a.ca.toFixed(2)} €</td>
+          </tr>`).join("");
+
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+<title>Comparaison personnalisée — ${nomBoutique}</title>
+<style>
+  @page { size: A4 portrait; margin: 15mm 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 10pt; color: #1f2937; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .toolbar { position: fixed; top: 0; left: 0; right: 0; z-index: 9999; background: #1a0005; display: flex; gap: 8px; justify-content: center; padding: 8px; }
+  .toolbar button { padding: 7px 18px; border: none; border-radius: 6px; font-size: 11pt; font-weight: 700; cursor: pointer; }
+  .btn-print { background: #C8001A; color: #fff; }
+  .btn-pdf { background: #FFD700; color: #1a0005; }
+  @media print { .toolbar { display: none !important; } }
+  h1 { color: #C8001A; font-size: 16pt; margin-bottom: 2px; }
+  h2 { color: #374151; font-size: 11pt; margin: 14px 0 6px; border-bottom: 2px solid #F07800; padding-bottom: 3px; }
+  .meta { color: #6b7280; font-size: 9pt; margin-bottom: 14px; }
+  .comp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+  .comp-box { border-radius: 8px; padding: 12px; border: 2px solid #e5e7eb; }
+  .comp-box.p1 { border-color: #F07800; background: #fff9f0; }
+  .comp-box.p2 { border-color: #3b82f6; background: #eff6ff; }
+  .comp-title { font-size: 10pt; font-weight: 700; margin-bottom: 8px; }
+  .comp-row { display: flex; justify-content: space-between; font-size: 9pt; padding: 4px 0; border-bottom: 1px solid #f3f4f6; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .kpi { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; }
+  .kpi-label { font-size: 8pt; color: #6b7280; margin-bottom: 4px; }
+  .kpi-p1 { font-size: 13pt; font-weight: 900; color: #F07800; }
+  .kpi-p2 { font-size: 13pt; font-weight: 900; color: #3b82f6; margin-top: 2px; }
+  .kpi-evo { font-size: 8.5pt; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  th { padding: 6px 8px; text-align: left; }
+  .footer { margin-top: 16px; color: #9ca3af; font-size: 7.5pt; border-top: 1px solid #eee; padding-top: 6px; text-align: center; }
+</style></head>
+<body>
+<div class="toolbar">
+  <button class="btn-print" onclick="window.print()">&#128424; Imprimer</button>
+  <button class="btn-pdf" onclick="window.print()">&#128229; Télécharger en PDF</button>
+</div>
+<h1>Comparaison personnalisée</h1>
+<div class="meta">${nomBoutique} &nbsp;·&nbsp; Généré le ${now.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div>
+
+<h2>Métriques clés</h2>
+<div class="kpi-grid">
+  <div class="kpi">
+    <div class="kpi-label">Chiffre d'affaires</div>
+    <div class="kpi-p1">P1 : ${p1.ca.toFixed(2)} €</div>
+    <div class="kpi-p2">P2 : ${p2.ca.toFixed(2)} €</div>
+    <div class="kpi-evo">Écart P1→P2 : ${evoCell(evoCa)}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Nombre de ventes</div>
+    <div class="kpi-p1">P1 : ${p1.nb}</div>
+    <div class="kpi-p2">P2 : ${p2.nb}</div>
+    <div class="kpi-evo">Écart P1→P2 : ${evoCell(evoNb)}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Panier moyen</div>
+    <div class="kpi-p1">P1 : ${p1.panier.toFixed(2)} €</div>
+    <div class="kpi-p2">P2 : ${p2.panier.toFixed(2)} €</div>
+    <div class="kpi-evo">Écart P1→P2 : ${evoCell(evoPanier)}</div>
+  </div>
+</div>
+
+<h2>Détail par période</h2>
+<div class="comp-grid">
+  <div class="comp-box p1">
+    <div class="comp-title" style="color:#F07800">Période 1 — ${fmtD(p1.debut)} au ${fmtD(p1.fin)}</div>
+    <div class="comp-row"><span>CA total</span><strong>${p1.ca.toFixed(2)} €</strong></div>
+    <div class="comp-row"><span>Nb ventes</span><strong>${p1.nb}</strong></div>
+    <div class="comp-row"><span>Panier moyen</span><strong>${p1.panier.toFixed(2)} €</strong></div>
+    <div class="comp-row"><span>Espèces</span><strong style="color:#16a34a">${p1.especes.toFixed(2)} € (${p1.ca > 0 ? Math.round(p1.especes / p1.ca * 100) : 0}%)</strong></div>
+    <div class="comp-row"><span>Carte bancaire</span><strong style="color:#2563eb">${p1.carte.toFixed(2)} € (${p1.ca > 0 ? Math.round(p1.carte / p1.ca * 100) : 0}%)</strong></div>
+  </div>
+  <div class="comp-box p2">
+    <div class="comp-title" style="color:#3b82f6">Période 2 — ${fmtD(p2.debut)} au ${fmtD(p2.fin)}</div>
+    <div class="comp-row"><span>CA total</span><strong>${p2.ca.toFixed(2)} €</strong></div>
+    <div class="comp-row"><span>Nb ventes</span><strong>${p2.nb}</strong></div>
+    <div class="comp-row"><span>Panier moyen</span><strong>${p2.panier.toFixed(2)} €</strong></div>
+    <div class="comp-row"><span>Espèces</span><strong style="color:#16a34a">${p2.especes.toFixed(2)} € (${p2.ca > 0 ? Math.round(p2.especes / p2.ca * 100) : 0}%)</strong></div>
+    <div class="comp-row"><span>Carte bancaire</span><strong style="color:#2563eb">${p2.carte.toFixed(2)} € (${p2.ca > 0 ? Math.round(p2.carte / p2.ca * 100) : 0}%)</strong></div>
+  </div>
+</div>
+
+<h2>Top 5 articles</h2>
+<div class="comp-grid">
+  <div>
+    <div style="font-weight:700;font-size:9pt;color:#F07800;margin-bottom:6px">Période 1 — ${fmtD(p1.debut)} au ${fmtD(p1.fin)}</div>
+    <table><thead><tr style="background:#F07800;color:#fff"><th>Article</th><th style="text-align:center">Qté</th><th style="text-align:right">CA</th></tr></thead><tbody>${top5Rows(p1.top5)}</tbody></table>
+  </div>
+  <div>
+    <div style="font-weight:700;font-size:9pt;color:#3b82f6;margin-bottom:6px">Période 2 — ${fmtD(p2.debut)} au ${fmtD(p2.fin)}</div>
+    <table><thead><tr style="background:#3b82f6;color:#fff"><th>Article</th><th style="text-align:center">Qté</th><th style="text-align:right">CA</th></tr></thead><tbody>${top5Rows(p2.top5)}</tbody></table>
+  </div>
+</div>
+
+<div class="footer">Document généré automatiquement — ${nomBoutique} — Lycée Sainte-Colombe<br/>Comparaison non contractuelle</div>
+</body></html>`;
+    const win = window.open("", "_blank");
+    if (win) { win.document.write(html); win.document.close(); }
+  }, [compResultats, shop]);
 
   // ── Bilan mensuel PDF ────────────────────────────────────────────────────────
   const genererBilanPdf = useCallback(() => {
@@ -2456,8 +2657,209 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
         )}
         <Btn variant="secondary" size="sm" onClick={exportExcel}><Download size={13} /> Export Excel</Btn>
         <Btn variant="secondary" size="sm" onClick={genererBilanPdf}><FileText size={13} /> Bilan mensuel PDF</Btn>
+        <Btn
+          variant={modeComparaison ? "primary" : "secondary"}
+          size="sm"
+          onClick={() => { setModeComparaison(v => !v); setCompResultats(null); }}>
+          <TrendingUp size={13} /> {modeComparaison ? "Vue normale" : "Comparaison personnalisée"}
+        </Btn>
       </div>
 
+      {/* ── Comparaison personnalisée ── */}
+      {modeComparaison && (
+        <div className={`${d.card} border rounded-xl p-4 space-y-4`}>
+          <div className={`text-sm font-semibold flex items-center gap-2 ${d.text}`}>
+            <TrendingUp size={16} className={color === "teal" ? "text-teal-500" : "text-orange-500"} />
+            Comparaison personnalisée
+          </div>
+
+          {/* Granularité du graphique */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-xs font-medium ${d.textSub}`}>Granularité du graphique :</span>
+            {[["jour","Jour"],["semaine","Semaine"],["mois","Mois"]].map(([v, l]) => (
+              <button key={v} onClick={() => setCompGranularite(v)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium ${compGranularite === v ? (color === "teal" ? "bg-teal-600 text-white" : "bg-orange-500 text-white") : d.btnSecondary}`}>
+                {l}
+              </button>
+            ))}
+          </div>
+
+          {/* Sélecteurs de périodes */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className={`rounded-xl p-3 border-2 ${dark ? "border-orange-600 bg-orange-950/20" : "border-orange-300 bg-orange-50"}`}>
+              <div className="text-xs font-bold text-orange-500 mb-2">Période 1</div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <input type="date" value={compP1Debut} onChange={e => setCompP1Debut(e.target.value)}
+                  className={`px-2 py-1.5 rounded-lg text-xs border ${d.input} focus:outline-none`} />
+                <span className={`text-xs ${d.textMuted}`}>→</span>
+                <input type="date" value={compP1Fin} min={compP1Debut} onChange={e => setCompP1Fin(e.target.value)}
+                  className={`px-2 py-1.5 rounded-lg text-xs border ${d.input} focus:outline-none`} />
+              </div>
+            </div>
+            <div className={`rounded-xl p-3 border-2 ${dark ? "border-blue-600 bg-blue-950/20" : "border-blue-300 bg-blue-50"}`}>
+              <div className="text-xs font-bold text-blue-500 mb-2">Période 2</div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <input type="date" value={compP2Debut} onChange={e => setCompP2Debut(e.target.value)}
+                  className={`px-2 py-1.5 rounded-lg text-xs border ${d.input} focus:outline-none`} />
+                <span className={`text-xs ${d.textMuted}`}>→</span>
+                <input type="date" value={compP2Fin} min={compP2Debut} onChange={e => setCompP2Fin(e.target.value)}
+                  className={`px-2 py-1.5 rounded-lg text-xs border ${d.input} focus:outline-none`} />
+              </div>
+            </div>
+          </div>
+
+          {/* Bouton Comparer */}
+          <div className="flex gap-2 flex-wrap">
+            <Btn onClick={calculerComparaison} disabled={!compP1Debut || !compP1Fin || !compP2Debut || !compP2Fin}>
+              <TrendingUp size={14} /> Comparer
+            </Btn>
+            {compResultats && (
+              <Btn variant="secondary" size="sm" onClick={genererComparaisonPdf}><FileText size={13} /> Export PDF</Btn>
+            )}
+          </div>
+
+          {/* Résultats */}
+          {compResultats && (() => {
+            const { p1, p2, chartData } = compResultats;
+            const fmtD = (s) => { if (!s) return "—"; const [y, m, j] = s.split("-"); return `${j}/${m}/${y}`; };
+            const ecart = (a, b) => b === 0 ? null : Math.round((a - b) / b * 100);
+            return (
+              <div className="space-y-4">
+                {/* KPIs comparatifs */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    { label: "CA Total", v1: `${p1.ca.toFixed(2)} €`, v2: `${p2.ca.toFixed(2)} €`, eco: ecart(p2.ca, p1.ca) },
+                    { label: "Nb ventes", v1: String(p1.nb), v2: String(p2.nb), eco: ecart(p2.nb, p1.nb) },
+                    { label: "Panier moyen", v1: `${p1.panier.toFixed(2)} €`, v2: `${p2.panier.toFixed(2)} €`, eco: ecart(p2.panier, p1.panier) },
+                  ].map((row) => {
+                    const eco = row.eco;
+                    const ecoPos = eco !== null && eco > 0;
+                    return (
+                      <div key={row.label} className={`${d.card} border rounded-xl p-3`}>
+                        <div className={`text-xs ${d.textMuted} mb-2`}>{row.label}</div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="w-2 h-2 rounded-full bg-orange-500 flex-shrink-0" />
+                          <span className="text-sm font-bold text-orange-500">{row.v1}</span>
+                          <span className={`text-xs ${d.textMuted}`}>P1</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+                          <span className="text-sm font-bold text-blue-500">{row.v2}</span>
+                          <span className={`text-xs ${d.textMuted}`}>P2</span>
+                          {eco !== null && (
+                            <span className={`text-xs font-bold ml-auto ${ecoPos ? "text-green-500" : eco === 0 ? d.textMuted : "text-red-500"}`}>
+                              {ecoPos ? "▲" : eco === 0 ? "=" : "▼"} {Math.abs(eco)}%
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Graphique courbe comparative */}
+                <div className={`${d.card} border rounded-xl p-4`}>
+                  <div className={`text-sm font-semibold mb-3 flex items-center gap-2 ${d.text}`}>
+                    <BarChart2 size={16} className={color === "teal" ? "text-teal-500" : "text-orange-500"} />
+                    Évolution du CA — comparaison côte à côte
+                  </div>
+                  {chartData.length === 0 ? (
+                    <p className={`text-xs ${d.textMuted} text-center py-4`}>Aucune vente dans les deux périodes</p>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={220}>
+                      <LineChart data={chartData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={dark ? "#374151" : "#e5e7eb"} />
+                        <XAxis dataKey="label" tick={{ fontSize: 9, fill: dark ? "#9ca3af" : "#6b7280" }} interval="preserveStartEnd" />
+                        <YAxis tick={{ fontSize: 9, fill: dark ? "#9ca3af" : "#6b7280" }} tickFormatter={v => v + " €"} />
+                        <Tooltip
+                          formatter={(v, name) => [`${r2(v).toFixed(2)} €`, name === "p1" ? `P1 (${fmtD(p1.debut)}→${fmtD(p1.fin)})` : `P2 (${fmtD(p2.debut)}→${fmtD(p2.fin)})`]}
+                          contentStyle={{ background: dark ? "#1f2937" : "#fff", border: "1px solid #374151", borderRadius: 8, fontSize: 12 }}
+                        />
+                        <Legend formatter={name => name === "p1" ? `P1 (${fmtD(p1.debut)} → ${fmtD(p1.fin)})` : `P2 (${fmtD(p2.debut)} → ${fmtD(p2.fin)})`} wrapperStyle={{ fontSize: 11 }} />
+                        <Line type="monotone" dataKey="p1" name="p1" stroke="#F07800" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} connectNulls />
+                        <Line type="monotone" dataKey="p2" name="p2" stroke="#3b82f6" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} connectNulls />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+
+                {/* Top 5 + Répartition paiements */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Top 5 articles */}
+                  <div className={`${d.card} border rounded-xl p-4`}>
+                    <div className={`text-sm font-semibold mb-3 flex items-center gap-2 ${d.text}`}>
+                      <Tag size={16} className={color === "teal" ? "text-teal-500" : "text-orange-500"} />
+                      Top 5 articles
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {[{ data: p1.top5, label: "Période 1", cls: "text-orange-500" }, { data: p2.top5, label: "Période 2", cls: "text-blue-500" }].map((col) => (
+                        <div key={col.label}>
+                          <div className={`text-xs font-bold mb-2 ${col.cls}`}>{col.label}</div>
+                          {col.data.length === 0 ? (
+                            <p className={`text-xs ${d.textMuted}`}>Aucune vente</p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {col.data.map((a, i) => {
+                                const medals = ["🥇","🥈","🥉","4️⃣","5️⃣"];
+                                return (
+                                  <div key={a.nom} className="flex items-center justify-between gap-1">
+                                    <span className={`text-xs ${d.text} flex items-center gap-1 min-w-0`}>
+                                      <span className="flex-shrink-0">{medals[i]}</span>
+                                      <span className="truncate">{a.nom}</span>
+                                    </span>
+                                    <span className={`text-xs font-bold flex-shrink-0 ${d.textSub}`}>{a.qte}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Répartition espèces / CB */}
+                  <div className={`${d.card} border rounded-xl p-4`}>
+                    <div className={`text-sm font-semibold mb-3 flex items-center gap-2 ${d.text}`}>
+                      <Banknote size={16} className={color === "teal" ? "text-teal-500" : "text-orange-500"} />
+                      Répartition espèces / CB
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      {[{ data: p1, label: "Période 1", cls: "text-orange-500" }, { data: p2, label: "Période 2", cls: "text-blue-500" }].map((col) => (
+                        <div key={col.label}>
+                          <div className={`text-xs font-bold mb-2 ${col.cls}`}>{col.label}</div>
+                          <div className="space-y-2">
+                            {[
+                              { label: "💵 Espèces", val: col.data.especes, barCls: "bg-green-500", textCls: "text-green-500" },
+                              { label: "💳 Carte", val: col.data.carte, barCls: "bg-blue-500", textCls: "text-blue-500" },
+                            ].map((pay) => {
+                              const pct = col.data.ca > 0 ? Math.round(pay.val / col.data.ca * 100) : 0;
+                              return (
+                                <div key={pay.label}>
+                                  <div className="flex justify-between text-xs mb-0.5">
+                                    <span className={d.textSub}>{pay.label}</span>
+                                    <span className={`font-bold ${pay.textCls}`}>{pay.val.toFixed(2)} €</span>
+                                  </div>
+                                  <div className={`h-1.5 rounded-full ${dark ? "bg-gray-700" : "bg-gray-100"}`}>
+                                    <div className={`h-1.5 rounded-full ${pay.barCls}`} style={{ width: `${pct}%` }} />
+                                  </div>
+                                  <div className={`text-xs ${d.textMuted} mt-0.5`}>{pct}%</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {!modeComparaison && (<>
       {/* KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-6 gap-3">
         {[
@@ -2904,6 +3306,8 @@ const ModuleAnalyses = ({ ventes, articles, users, shop, isAdmin, currentUserId,
           </div>
         </div>
       )}
+
+      </>)}
 
       {confirmReset && (
         <Modal title="Réinitialiser les ventes" onClose={() => setConfirmReset(false)}>
