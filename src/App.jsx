@@ -6512,6 +6512,14 @@ const ModuleHygiene = ({ temperatures, setTemperatures, nettoyages, setNettoyage
 
 export default function App() {
   const [users, setUsers] = useFirestoreState("users", INITIAL_USERS);
+
+  // Restauration automatique si Firestore retourne un tableau vide (document absent ou corrompu)
+  useEffect(() => {
+    if (users.length === 0) {
+      console.warn('[Auth] Aucun utilisateur en base → restauration des utilisateurs par défaut');
+      setUsers(INITIAL_USERS);
+    }
+  }, [users]); // eslint-disable-line react-hooks/exhaustive-deps
   const [currentUser, setCurrentUser] = useState(null);
   const [currentShop, setCurrentShop] = useState(null);
   const [onglet, setOnglet] = useLocalStorage("bl_onglet", "caisse");

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Réparation utilisateurs Firestore</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
+    button { padding: 12px 24px; font-size: 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    #log { margin-top: 20px; padding: 16px; background: #f1f5f9; border-radius: 6px; white-space: pre-wrap; font-family: monospace; font-size: 14px; }
+    .ok { color: #16a34a; } .err { color: #dc2626; }
+  </style>
+</head>
+<body>
+  <h2>Réparation utilisateurs — Boutiques Lycée</h2>
+  <p>Ce script vérifie le document <code>boutique_data/users</code> dans Firestore et le recrée si vide ou manquant.</p>
+  <button onclick="fixUsers()">Vérifier et réparer</button>
+  <div id="log">En attente...</div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyD9qadE1xaVj1vGN8GxcReP5rUkQkNbYg4",
+      authDomain: "boutiques-lycee.firebaseapp.com",
+      projectId: "boutiques-lycee",
+      storageBucket: "boutiques-lycee.firebasestorage.app",
+      messagingSenderId: "339009074786",
+      appId: "1:339009074786:web:fd617ac3b8df504b00433b"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const DEFAULT_USERS = [
+      { id: 1, nom: "Admin", prenom: "Super", login: "admin", mdp: "admin123", role: "admin", boutiques: ["peda", "locale"], actif: true },
+      { id: 2, nom: "Martin", prenom: "Claire", login: "gestpeda", mdp: "peda2024", role: "gestionnaire", boutiques: ["peda"], actif: true },
+      { id: 3, nom: "Dupont", prenom: "Luc", login: "gestlocal", mdp: "local2024", role: "gestionnaire", boutiques: ["locale"], actif: true },
+      { id: 4, nom: "Leblanc", prenom: "Marie", login: "caisse1", mdp: "caisse123", role: "caissier", boutiques: ["peda"], actif: true },
+      { id: 5, nom: "Moreau", prenom: "Tom", login: "caisse2", mdp: "caisse456", role: "caissier", boutiques: ["locale"], actif: true },
+      { id: 6, nom: "École", prenom: "Compte", login: "Ecole", mdp: "Ecole 123", role: "ecole", boutiques: ["peda", "locale"], actif: true },
+      { id: 7, nom: "Comptable", prenom: "Service", login: "comptable", mdp: "compta2024", role: "comptable", boutiques: ["peda", "locale"], actif: true },
+    ];
+
+    window.fixUsers = async function() {
+      const logEl = document.getElementById('log');
+      const log = (msg, cls = '') => { logEl.innerHTML += `<span class="${cls}">${msg}\n</span>`; };
+      logEl.innerHTML = '';
+
+      try {
+        log('Connexion à Firestore...');
+        const ref = doc(db, "boutique_data", "users");
+        const snap = await getDoc(ref);
+
+        if (!snap.exists()) {
+          log('Document "users" ABSENT dans Firestore.', 'err');
+          log('Création avec les utilisateurs par défaut...');
+          await setDoc(ref, { data: DEFAULT_USERS });
+          log('Document créé avec succès !', 'ok');
+        } else {
+          const data = snap.data().data;
+          if (!data || data.length === 0) {
+            log('Document "users" VIDE dans Firestore.', 'err');
+            log('Réécriture avec les utilisateurs par défaut...');
+            await setDoc(ref, { data: DEFAULT_USERS });
+            log('Document réparé avec succès !', 'ok');
+          } else {
+            log(`Document "users" OK — ${data.length} utilisateur(s) trouvé(s) :`, 'ok');
+            data.forEach(u => log(`  • ${u.login} (${u.role}) — actif: ${u.actif}`));
+          }
+        }
+
+        log('\nUtilisateurs en base après réparation :');
+        const snap2 = await getDoc(ref);
+        snap2.data().data.forEach(u => log(`  • ${u.login} / ${u.mdp} — ${u.role}`));
+        log('\nRéparation terminée. Rechargez l\'application.', 'ok');
+      } catch (err) {
+        log('ERREUR : ' + err.message, 'err');
+        console.error(err);
+      }
+    };
+  </script>
+</body>
+</html>
