@@ -63,13 +63,16 @@ const dk = (dark) => ({
 // ─── DONNÉES INITIALES ──────────────────────────────────────────────────────
 
 const INITIAL_USERS = [
-  { id: 1, nom: "Admin", prenom: "Super", login: "admin", mdp: "admin123", role: "admin", boutiques: ["peda", "locale"], actif: true },
-  { id: 2, nom: "Martin", prenom: "Claire", login: "gestpeda", mdp: "peda2024", role: "gestionnaire", boutiques: ["peda"], actif: true },
-  { id: 3, nom: "Dupont", prenom: "Luc", login: "gestlocal", mdp: "local2024", role: "gestionnaire", boutiques: ["locale"], actif: true },
-  { id: 4, nom: "Leblanc", prenom: "Marie", login: "caisse1", mdp: "caisse123", role: "caissier", boutiques: ["peda"], actif: true },
-  { id: 5, nom: "Moreau", prenom: "Tom", login: "caisse2", mdp: "caisse456", role: "caissier", boutiques: ["locale"], actif: true },
-  { id: 6, nom: "École", prenom: "Compte", login: "Ecole", mdp: "Ecole 123", role: "ecole", boutiques: ["peda", "locale"], actif: true },
-  { id: 7, nom: "Comptable", prenom: "Service", login: "comptable", mdp: "compta2024", role: "comptable", boutiques: ["peda", "locale"], actif: true },
+  { id: 1,  nom: "", prenom: "Admin",     login: "admin",     mdp: "admin123",    role: "admin",        boutiques: ["peda", "locale"], actif: true },
+  { id: 2,  nom: "", prenom: "Arnaud",    login: "Arnaud",    mdp: "Arnaud123",   role: "admin",        boutiques: ["peda", "locale"], actif: true },
+  { id: 3,  nom: "", prenom: "Anne",      login: "Anne",      mdp: "Anne123",     role: "gestionnaire", boutiques: ["peda", "locale"], actif: true },
+  { id: 4,  nom: "", prenom: "Alain",     login: "Alain",     mdp: "Alain123",    role: "gestionnaire", boutiques: ["peda", "locale"], actif: true },
+  { id: 5,  nom: "", prenom: "Delphine",  login: "Delphine",  mdp: "Delphine123", role: "gestionnaire", boutiques: ["peda", "locale"], actif: true },
+  { id: 6,  nom: "", prenom: "Florim",    login: "Florim",    mdp: "Florim123",   role: "gestionnaire", boutiques: ["peda", "locale"], actif: true },
+  { id: 7,  nom: "", prenom: "Yann",      login: "Yann",      mdp: "Yann123",     role: "gestionnaire", boutiques: ["peda", "locale"], actif: true },
+  { id: 8,  nom: "", prenom: "Jean-Marc", login: "Jean-Marc", mdp: "JeanMarc123", role: "gestionnaire", boutiques: ["peda", "locale"], actif: true },
+  { id: 9,  nom: "", prenom: "Annick",    login: "Annick",    mdp: "Annick123",   role: "comptable",    boutiques: ["peda", "locale"], actif: true },
+  { id: 10, nom: "", prenom: "École",     login: "Ecole",     mdp: "Ecole 123",   role: "ecole",        boutiques: ["peda", "locale"], actif: true },
 ];
 
 const ARTICLE_IMAGES = {
