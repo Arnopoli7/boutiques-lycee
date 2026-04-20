@@ -5,17 +5,19 @@
   <title>Réparation utilisateurs Firestore</title>
   <style>
     body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
-    button { padding: 12px 24px; font-size: 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; }
-    button:hover { background: #1d4ed8; }
-    #log { margin-top: 20px; padding: 16px; background: #f1f5f9; border-radius: 6px; white-space: pre-wrap; font-family: monospace; font-size: 14px; }
-    .ok { color: #16a34a; } .err { color: #dc2626; }
+    .btn { padding: 12px 24px; font-size: 16px; color: white; border: none; border-radius: 6px; cursor: pointer; margin-right: 10px; }
+    .btn-blue { background: #2563eb; } .btn-blue:hover { background: #1d4ed8; }
+    .btn-gray { background: #6b7280; } .btn-gray:hover { background: #4b5563; }
+    #log { margin-top: 20px; padding: 16px; background: #f1f5f9; border-radius: 6px; white-space: pre-wrap; font-family: monospace; font-size: 13px; min-height: 80px; }
+    .ok { color: #16a34a; } .err { color: #dc2626; } .info { color: #2563eb; }
   </style>
 </head>
 <body>
-  <h2>Réparation utilisateurs — Boutiques Lycée</h2>
-  <p>Ce script écrase le document <code>boutique_data/users</code> dans Firestore avec la liste officielle des utilisateurs.</p>
-  <button onclick="fixUsers()">Écraser et recréer les utilisateurs</button>
-  <div id="log">En attente...</div>
+  <h2>Gestion utilisateurs — Boutiques Lycée</h2>
+  <p>Document Firestore : <code>boutique_data/users</code></p>
+  <button class="btn btn-gray" onclick="lireUsers()">Lire l'état actuel</button>
+  <button class="btn btn-blue" onclick="ecraseUsers()">Écraser avec la liste officielle</button>
+  <div id="log">Cliquez sur un bouton pour commencer.</div>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -33,7 +35,7 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    const DEFAULT_USERS = [
+    const OFFICIAL_USERS = [
       { id: 1,  nom: "", prenom: "Admin",     login: "admin",     mdp: "admin123",    role: "admin",        boutiques: ["peda", "locale"], actif: true },
       { id: 2,  nom: "", prenom: "Arnaud",    login: "Arnaud",    mdp: "Arnaud123",   role: "admin",        boutiques: ["peda", "locale"], actif: true },
       { id: 3,  nom: "", prenom: "Anne",      login: "Anne",      mdp: "Anne123",     role: "gestionnaire", boutiques: ["peda", "locale"], actif: true },
@@ -46,23 +48,42 @@
       { id: 10, nom: "", prenom: "École",     login: "Ecole",     mdp: "Ecole 123",   role: "ecole",        boutiques: ["peda", "locale"], actif: true },
     ];
 
-    window.fixUsers = async function() {
-      const logEl = document.getElementById('log');
-      const log = (msg, cls = '') => { logEl.innerHTML += `<span class="${cls}">${msg}\n</span>`; };
+    const logEl = document.getElementById('log');
+    const log = (msg, cls = '') => { logEl.innerHTML += `<span class="${cls}">${msg}\n</span>`; };
+
+    window.lireUsers = async function() {
       logEl.innerHTML = '';
-
       try {
-        log('Connexion à Firestore...');
-        const ref = doc(db, "boutique_data", "users");
+        log('Lecture de boutique_data/users...', 'info');
+        const snap = await getDoc(doc(db, "boutique_data", "users"));
+        if (!snap.exists()) {
+          log('Document ABSENT.', 'err');
+        } else {
+          const data = snap.data().data;
+          if (!data || data.length === 0) {
+            log('Document présent mais VIDE.', 'err');
+          } else {
+            log(`${data.length} utilisateur(s) trouvé(s) :`, 'ok');
+            data.forEach(u => log(`  • login="${u.login}"  mdp="${u.mdp}"  role="${u.role}"  actif=${u.actif}`));
+          }
+        }
+      } catch (err) {
+        log('ERREUR : ' + err.message, 'err');
+      }
+    };
 
-        log('Écrasement du document "users" avec la liste officielle...');
-        await setDoc(ref, { data: DEFAULT_USERS });
-        log('Document écrit avec succès !', 'ok');
-
-        log('\nUtilisateurs en base :');
-        const snap = await getDoc(ref);
-        snap.data().data.forEach(u => log(`  • ${u.login} / ${u.mdp} — ${u.role}`));
-        log('\nTerminé. Rechargez l\'application.', 'ok');
+    window.ecraseUsers = async function() {
+      logEl.innerHTML = '';
+      try {
+        log('Écriture de la liste officielle dans boutique_data/users...', 'info');
+        await setDoc(doc(db, "boutique_data", "users"), { data: OFFICIAL_USERS });
+        log('Écrit avec succès !', 'ok');
+        log('');
+        log('Vérification :');
+        const snap = await getDoc(doc(db, "boutique_data", "users"));
+        snap.data().data.forEach(u => log(`  • login="${u.login}"  mdp="${u.mdp}"  role="${u.role}"`));
+        log('');
+        log('Rechargez maintenant l\'application.', 'ok');
       } catch (err) {
         log('ERREUR : ' + err.message, 'err');
         console.error(err);

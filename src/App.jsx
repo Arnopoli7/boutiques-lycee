@@ -6516,10 +6516,13 @@ const ModuleHygiene = ({ temperatures, setTemperatures, nettoyages, setNettoyage
 export default function App() {
   const [users, setUsers] = useFirestoreState("users", INITIAL_USERS);
 
-  // Restauration automatique si Firestore retourne un tableau vide (document absent ou corrompu)
+  // Restauration automatique si Firestore retourne un tableau vide ou des données obsolètes
+  // (ancienne liste : gestpeda, gestlocal, caisse1, caisse2 → remplacés par les vrais noms)
   useEffect(() => {
-    if (users.length === 0) {
-      console.warn('[Auth] Aucun utilisateur en base → restauration des utilisateurs par défaut');
+    const OLD_LOGINS = ["gestpeda", "gestlocal", "caisse1", "caisse2"];
+    const isObsolete = users.some(u => OLD_LOGINS.includes(u.login));
+    if (users.length === 0 || isObsolete) {
+      console.warn('[Auth] Utilisateurs absents ou obsolètes → restauration des utilisateurs par défaut');
       setUsers(INITIAL_USERS);
     }
   }, [users]); // eslint-disable-line react-hooks/exhaustive-deps
